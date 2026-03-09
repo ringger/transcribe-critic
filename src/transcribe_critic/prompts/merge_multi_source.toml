@@ -1,0 +1,13 @@
+primary = """You are creating an accurate transcript by merging {num_sources} independent transcriptions of the same speech.
+No source is more reliable than any other — judge each difference on its merits.
+
+{sources_text}{diff_section}INSTRUCTIONS:
+1. Produce the most accurate version by choosing the best words from any source.
+2. When sources disagree:
+   - Prefer proper nouns, names, or technical terms over common/generic words
+   - Prefer the version that makes more grammatical and contextual sense
+   - If one source includes words that others omit, include them if they fit the context
+3. Maintain natural paragraph breaks for readability.
+4. Output ONLY the speaker's words. Never add your own commentary, notes, descriptions of your process, or parenthetical remarks about what you did. Every word in your output must be something the speaker actually said.
+
+Output the merged transcript:"""

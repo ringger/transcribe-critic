@@ -11,6 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
@@ -144,6 +145,7 @@ def analyze_slides_with_vision(config: SpeechConfig, data: SpeechData) -> None:
             image_data = base64.standard_b64encode(f.read()).decode("utf-8")
 
         # Call vision LLM
+        slide_prompts = load_prompt("slides")
         message = llm_call_with_retry(
             client, slides_cfg,
             model=slides_cfg.claude_model,
@@ -162,15 +164,7 @@ def analyze_slides_with_vision(config: SpeechConfig, data: SpeechData) -> None:
                         },
                         {
                             "type": "text",
-                            "text": """Analyze this presentation slide and return a JSON object with these fields:
-- "type": one of "title", "content", "speaker", "transition", "venue", "performance", "end"
-- "title": the slide title if visible (null if none)
-- "subtitle": subtitle if present (null if none)
-- "bullet_points": array of bullet points if present (null if none)
-- "images": brief description of any images/graphics (null if none)
-- "description": one-sentence description of what this slide shows
-
-Return ONLY the JSON object, no other text."""
+                            "text": slide_prompts["primary"],
                         }
                     ],
                 }
@@ -178,6 +172,8 @@ Return ONLY the JSON object, no other text."""
         )
 
         # Parse response
+        response_text = "Could not parse slide"
+        needs_retry = False
         try:
             response_text = message.content[0].text
             # Try to extract JSON from response
@@ -185,9 +181,51 @@ Return ONLY the JSON object, no other text."""
             if json_match:
                 slide_info = json.loads(json_match.group())
             else:
+                # Text response but no JSON — use as description
                 slide_info = {"description": response_text, "type": "content"}
-        except (json.JSONDecodeError, IndexError):
-            slide_info = {"description": "Could not parse slide", "type": "unknown"}
+        except json.JSONDecodeError:
+            slide_info = None
+            needs_retry = True
+        except IndexError:
+            slide_info = None
+            needs_retry = True
+
+        # Retry with a more constrained prompt only on parse errors
+        if needs_retry:
+            try:
+                retry_message = llm_call_with_retry(
+                    client, slides_cfg,
+                    model=slides_cfg.claude_model,
+                    max_tokens=1024,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": image_data,
+                                    },
+                                },
+                                {
+                                    "type": "text",
+                                    "text": slide_prompts["retry"],
+                                },
+                            ],
+                        }
+                    ],
+                )
+                retry_text = retry_message.content[0].text
+                retry_match = re.search(r'\{.*\}', retry_text, re.DOTALL)
+                if retry_match:
+                    slide_info = json.loads(retry_match.group())
+            except Exception:
+                pass
+
+        if slide_info is None:
+            slide_info = {"description": response_text, "type": "unknown"}
 
         slide_info["slide_number"] = i + 1
         slide_info["filename"] = slide_path.name

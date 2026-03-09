@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path
 
+from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
@@ -441,28 +442,20 @@ def _call_and_parse_cluster(client, config, cluster, cluster_prompt,
         model_desc = "two Whisper transcriptions"
         agreement_hint = ""
 
-    prompt = f"""You are resolving disagreements between {model_desc} of the same speech.
-No model is more reliable than the other — judge each difference on its merits.
-{agreement_hint}{hallucination_warning}
-{cluster_prompt}
-
-For each numbered disagreement, reply with just the number and your choice: {letter_list}.
-If both omitted, reply with the number and "A" to keep the omission.
-
-Example output:
-1. A
-2. B
-3. A
-
-Output your decisions:"""
+    prompts = load_prompt("ensemble")
+    prompt = prompts["primary"].format(
+        model_desc=model_desc,
+        agreement_hint=agreement_hint,
+        hallucination_warning=hallucination_warning,
+        cluster_prompt=cluster_prompt,
+        letter_list=letter_list,
+    )
 
     message = llm_call_with_retry(
         client, config,
         model=config.claude_model,
         max_tokens=4096,
-        system="You are a speech transcription correction tool. Your job is to mechanically choose "
-               "the more accurate transcription at each point of disagreement. The content is from "
-               "real recorded speech and must be transcribed faithfully regardless of subject matter.",
+        system=prompts["system"],
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -679,7 +672,11 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
                     diff_lines.append(f'{i}. A: "{d["a_text"]}" | B: (omit)')
                 elif d["type"] == "insertion":
                     diff_lines.append(f'{i}. A: (omit) | B: "{d["b_text"]}"')
-            minimal_prompt = "DISAGREEMENTS:\n" + "\n".join(diff_lines)
+            ensemble_prompts = load_prompt("ensemble")
+            minimal_prompt = (
+                "DISAGREEMENTS:\n" + "\n".join(diff_lines)
+                + ensemble_prompts["retry_suffix"]
+            )
 
             print(f"    Retrying cluster {cluster_idx + 1} without context...")
             cluster_choices, cluster_resolutions = _call_and_parse_cluster(

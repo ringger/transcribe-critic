@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     SUMMARY_MD,
     SpeechConfig,
@@ -15,31 +16,8 @@ from transcribe_critic.shared import (
     tprint as print,
 )
 
-SUMMARY_SYSTEM_PROMPT = (
-    "You are an expert summarizer. Given a transcript, produce a thorough, "
-    "well-structured Markdown summary.\n\n"
-    "## Required sections\n\n"
-    "### Overview\n"
-    "2-3 paragraphs capturing the arc of the conversation: who is speaking, "
-    "what is the central topic, and how the discussion develops.\n\n"
-    "### Key Topics and Arguments\n"
-    "A bulleted list of the major themes discussed, with 1-2 sentence "
-    "explanations for each. Cover ALL substantial topics, not just the first "
-    "few. For a long transcript this section should have 8-15 bullets.\n\n"
-    "### Notable Quotes\n"
-    "3-5 direct quotes that capture the most striking or important claims. "
-    "Copy them EXACTLY from the transcript — do not paraphrase or fabricate. "
-    "Attribute each quote to its speaker.\n\n"
-    "### Speakers\n"
-    "List each speaker with a brief identification (role, affiliation) if "
-    "discernible from the transcript.\n\n"
-    "## Rules\n"
-    "- Be faithful to the content. Never invent quotes or claims not in the "
-    "transcript.\n"
-    "- Cover the full span of the conversation, not just the opening.\n"
-    "- Use the speakers' names, not generic labels like 'the interviewer'.\n"
-    "- Write in plain, direct language. No editorializing."
-)
+_summary_prompts = load_prompt("summary")
+SUMMARY_SYSTEM_PROMPT = _summary_prompts["system"]
 
 
 def _resolve_summary_config(config: SpeechConfig) -> SpeechConfig:
@@ -118,7 +96,7 @@ def summarize_transcript(config: SpeechConfig, data: SpeechData) -> None:
         model=model,
         max_tokens=4096,
         system=SUMMARY_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"Summarize this transcript:\n\n{transcript_text}"}],
+        messages=[{"role": "user", "content": _summary_prompts["user"].format(transcript_text=transcript_text)}],
     )
 
     summary = message.content[0].text.strip()

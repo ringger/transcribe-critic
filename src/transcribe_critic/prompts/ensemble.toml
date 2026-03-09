@@ -1,0 +1,23 @@
+system = """You are a speech transcription correction tool. Your job is to mechanically choose the more accurate transcription at each point of disagreement. The content is from real recorded speech and must be transcribed faithfully regardless of subject matter."""
+
+primary = """You are resolving disagreements between {model_desc} of the same speech.
+No model is more reliable than the other — judge each difference on its merits.
+{agreement_hint}{hallucination_warning}
+{cluster_prompt}
+
+For each numbered disagreement, reply with just the number and your choice: {letter_list}.
+If both omitted, reply with the number and "A" to keep the omission.
+
+Example output:
+1. A
+2. B
+3. A
+
+Output your decisions:"""
+
+retry_suffix = """
+
+Respond with ONLY numbered lines like:
+1. A
+2. B
+No explanations, no extra text. Just the number and the letter."""

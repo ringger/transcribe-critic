@@ -1,0 +1,19 @@
+primary = """Below is the beginning of a transcript with speaker labels.
+Identify who each speaker is based on introductions, context clues, or how they refer to each other.
+{metadata_section}
+
+SPEAKERS: {speaker_list}
+
+TRANSCRIPT:
+{intro_text}
+
+For each speaker label, provide their real name. Use the metadata above for correct spellings when available. If you cannot determine a speaker's name, keep the original label.
+Reply ONLY with a JSON object mapping speaker labels to names, like:
+{{"SPEAKER_00": "John Smith", "SPEAKER_01": "Jane Doe"}}"""
+
+retry = """Who are these speakers? {speaker_list}
+
+{intro_text_truncated}
+
+Respond with ONLY a JSON object, no other text. Example:
+{{"SPEAKER_00": "Name"}}"""

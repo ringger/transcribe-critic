@@ -11,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
+from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData,
@@ -554,18 +555,12 @@ def _llm_identify_speakers(config: SpeechConfig, speakers: list,
                 + "\n".join(parts)
             )
 
-    prompt = f"""Below is the beginning of a transcript with speaker labels.
-Identify who each speaker is based on introductions, context clues, or how they refer to each other.
-{metadata_section}
-
-SPEAKERS: {speaker_list}
-
-TRANSCRIPT:
-{intro_text}
-
-For each speaker label, provide their real name. Use the metadata above for correct spellings when available. If you cannot determine a speaker's name, keep the original label.
-Reply ONLY with a JSON object mapping speaker labels to names, like:
-{{"SPEAKER_00": "John Smith", "SPEAKER_01": "Jane Doe"}}"""
+    speaker_prompts = load_prompt("speaker_id")
+    prompt = speaker_prompts["primary"].format(
+        metadata_section=metadata_section,
+        speaker_list=speaker_list,
+        intro_text=intro_text,
+    )
 
     client = create_llm_client(config)
 
@@ -582,7 +577,26 @@ Reply ONLY with a JSON object mapping speaker labels to names, like:
         import re
         json_match = re.search(r'\{[^}]+\}', response_text)
         if json_match:
-            return json.loads(json_match.group())
+            result = json.loads(json_match.group())
+            if result:
+                return result
+
+        # Retry with a minimal prompt emphasizing format
+        print("  Speaker ID response not parseable, retrying with simpler prompt...")
+        retry_prompt = speaker_prompts["retry"].format(
+            speaker_list=speaker_list,
+            intro_text_truncated=intro_text[:1000],
+        )
+        retry_msg = llm_call_with_retry(
+            client, config,
+            model=config.claude_model,
+            max_tokens=256,
+            messages=[{"role": "user", "content": retry_prompt}],
+        )
+        retry_text = retry_msg.content[0].text.strip()
+        retry_match = re.search(r'\{[^}]+\}', retry_text)
+        if retry_match:
+            return json.loads(retry_match.group())
     except Exception as e:
         print(f"  Warning: LLM speaker identification failed: {e}")
 

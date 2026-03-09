@@ -363,4 +363,7 @@ class TestAnalyzeSlidesWithVisionExecution:
 
         analyze_slides_with_vision(config, data)
         assert data.slide_metadata[0]["type"] == "unknown"
-        assert "Could not parse" in data.slide_metadata[0]["description"]
+        # After retry failure, falls back to raw response text as description
+        assert data.slide_metadata[0]["description"] == "{invalid json here}"
+        # Should have been called twice (original + retry)
+        assert mock_llm.call_count == 2

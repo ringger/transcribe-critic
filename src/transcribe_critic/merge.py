@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 
+from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, COMMON_WORDS,
@@ -652,22 +653,13 @@ def _merge_structured(skeleton_segments: list, all_sources: list,
                 diff_section += f"PASSAGE {p_idx} DIFFERENCES:\n"
                 diff_section += chunk_diffs
 
-        prompt = f"""You are creating an accurate transcript by merging {num_sources} independent transcriptions of the same speech.
-No source is more reliable than any other — judge each difference on its merits.
-
-{passage_texts}{diff_section}INSTRUCTIONS:
-1. For each passage, produce the most accurate version by choosing the best words from any source.
-2. When sources disagree:
-   - Prefer proper nouns, names, or technical terms over common/generic words
-   - Prefer the version that makes more grammatical and contextual sense
-   - If one source includes words that others omit, include them if they fit the context
-3. Output each passage on its own line in this format:
-   PASSAGE 1: [merged text]
-   PASSAGE 2: [merged text]
-4. Output exactly {len(seg_indices)} passages.
-5. Output ONLY the speaker's words. Never add your own commentary, notes, descriptions of your process, or parenthetical remarks about what you did. Every word in your output must be something the speaker actually said.
-
-Output the merged passages:"""
+        prompts = load_prompt("merge_structured")
+        prompt = prompts["primary"].format(
+            num_sources=num_sources,
+            passage_texts=passage_texts,
+            diff_section=diff_section,
+            num_passages=len(seg_indices),
+        )
 
         prompt_words = len(prompt.split())
         print(f"    Prompt: ~{prompt_words} words ({len(prompt)} chars)")
@@ -692,11 +684,21 @@ Output the merged passages:"""
             debug_path = chunks_dir / f"chunk_{chunk_idx:03d}_failed_response.txt"
             debug_path.write_text(response)
 
+            # Use a simpler, more constrained backup prompt
+            example_lines = "\n".join(f"PASSAGE {k}: [merged text for passage {k}]"
+                                      for k in range(1, len(seg_indices) + 1))
+            retry_prompt = prompts["retry"].format(
+                num_sources=num_sources,
+                passage_texts=passage_texts,
+                example_lines=example_lines,
+                num_passages=len(seg_indices),
+            )
+
             message = llm_call_with_retry(
                 client, merge_cfg,
                 model=merge_cfg.claude_model,
                 max_tokens=16384,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": retry_prompt}]
             )
             response = message.content[0].text.strip()
             print(f"    Retry response: {len(response)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out")
@@ -812,19 +814,12 @@ def _merge_multi_source(sources: list,
         if diff_section:
             diff_section = "\n" + diff_section
 
-        prompt = f"""You are creating an accurate transcript by merging {num_sources} independent transcriptions of the same speech.
-No source is more reliable than any other — judge each difference on its merits.
-
-{sources_text}{diff_section}INSTRUCTIONS:
-1. Produce the most accurate version by choosing the best words from any source.
-2. When sources disagree:
-   - Prefer proper nouns, names, or technical terms over common/generic words
-   - Prefer the version that makes more grammatical and contextual sense
-   - If one source includes words that others omit, include them if they fit the context
-3. Maintain natural paragraph breaks for readability.
-4. Output ONLY the speaker's words. Never add your own commentary, notes, descriptions of your process, or parenthetical remarks about what you did. Every word in your output must be something the speaker actually said.
-
-Output the merged transcript:"""
+        prompts = load_prompt("merge_multi_source")
+        prompt = prompts["primary"].format(
+            num_sources=num_sources,
+            sources_text=sources_text,
+            diff_section=diff_section,
+        )
 
         prompt_words = len(prompt.split())
         print(f"    Prompt: ~{prompt_words} words ({len(prompt)} chars)")

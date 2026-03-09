@@ -1,0 +1,12 @@
+primary = """Analyze this presentation slide and return a JSON object with these fields:
+- "type": one of "title", "content", "speaker", "transition", "venue", "performance", "end"
+- "title": the slide title if visible (null if none)
+- "subtitle": subtitle if present (null if none)
+- "bullet_points": array of bullet points if present (null if none)
+- "images": brief description of any images/graphics (null if none)
+- "description": one-sentence description of what this slide shows
+
+Return ONLY the JSON object, no other text."""
+
+retry = """Describe this slide. Respond with ONLY a JSON object, no markdown fences.
+Example: {{"type": "content", "title": "Slide Title", "description": "What the slide shows"}}"""

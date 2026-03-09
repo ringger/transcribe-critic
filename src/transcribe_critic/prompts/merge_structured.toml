@@ -1,0 +1,23 @@
+primary = """You are creating an accurate transcript by merging {num_sources} independent transcriptions of the same speech.
+No source is more reliable than any other — judge each difference on its merits.
+
+{passage_texts}{diff_section}INSTRUCTIONS:
+1. For each passage, produce the most accurate version by choosing the best words from any source.
+2. When sources disagree:
+   - Prefer proper nouns, names, or technical terms over common/generic words
+   - Prefer the version that makes more grammatical and contextual sense
+   - If one source includes words that others omit, include them if they fit the context
+3. Output each passage on its own line in this format:
+   PASSAGE 1: [merged text]
+   PASSAGE 2: [merged text]
+4. Output exactly {num_passages} passages.
+5. Output ONLY the speaker's words. Never add your own commentary, notes, descriptions of your process, or parenthetical remarks about what you did. Every word in your output must be something the speaker actually said.
+
+Output the merged passages:"""
+
+retry = """Combine {num_sources} transcriptions into one accurate version.
+
+{passage_texts}For each passage, pick the best words from any source and output in this EXACT format:
+{example_lines}
+
+Return exactly {num_passages} passages. No commentary, no extra text."""

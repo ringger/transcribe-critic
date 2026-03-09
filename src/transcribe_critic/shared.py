@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 import builtins
@@ -92,11 +92,49 @@ class SpeechConfig:
     local_model: str = DEFAULT_LOCAL_MODEL  # Default Ollama model for text
     local_vision_model: str = DEFAULT_LOCAL_VISION_MODEL  # Default Ollama model for vision
     ollama_base_url: str = DEFAULT_OLLAMA_URL
+    # Merge/ensemble LLM overrides
+    merge_local: Optional[bool] = None  # None = inherit from `local`
+    merge_model: Optional[str] = None  # None = inherit from claude_model / local_model
+    merge_api_key: Optional[str] = None  # None = inherit from api_key
+    # Slides vision LLM overrides
+    slides_local: Optional[bool] = None  # None = inherit from `local`
+    slides_model: Optional[str] = None  # None = inherit from claude_model / local_vision_model
+    slides_api_key: Optional[str] = None  # None = inherit from api_key
     # Summarization
     summarize: bool = True  # Generate transcript summary (disable with --no-summarize)
     summary_local: Optional[bool] = None  # None = inherit from `local`
     summary_model: Optional[str] = None  # None = inherit from claude_model / local_model
     summary_api_key: Optional[str] = None  # None = inherit from api_key
+
+
+def resolve_stage_config(
+    config: SpeechConfig,
+    stage_local: Optional[bool],
+    stage_model: Optional[str],
+    stage_api_key: Optional[str],
+    *,
+    vision: bool = False,
+) -> SpeechConfig:
+    """Return a SpeechConfig with LLM fields overridden for a pipeline stage.
+
+    If vision=True and the effective backend is local, stage_model overrides
+    local_vision_model instead of local_model.
+    """
+    overrides: dict = {}
+    if stage_local is not None:
+        overrides["local"] = stage_local
+    effective_local = overrides.get("local", config.local)
+    if stage_model is not None:
+        if effective_local:
+            key = "local_vision_model" if vision else "local_model"
+            overrides[key] = stage_model
+        else:
+            overrides["claude_model"] = stage_model
+    if stage_api_key is not None:
+        overrides["api_key"] = stage_api_key
+    if not overrides:
+        return config
+    return replace(config, **overrides)
 
 
 # Standard output filenames — single source of truth

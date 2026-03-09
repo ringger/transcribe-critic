@@ -14,7 +14,8 @@ import subprocess
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, COMMON_WORDS,
-    create_llm_client, llm_call_with_retry, is_up_to_date, _save_json,
+    create_llm_client, llm_call_with_retry, resolve_stage_config,
+    is_up_to_date, _save_json,
 )
 
 
@@ -494,6 +495,42 @@ def _compute_chunk_diffs(chunk_texts: list, config: SpeechConfig) -> str:
     return ""
 
 
+def _parse_passage_response(response: str, expected_count: int) -> dict[int, str]:
+    """Parse LLM response for PASSAGE N: entries with fallback patterns.
+
+    Tries multiple formats in order of specificity:
+    1. PASSAGE N: text  (canonical)
+    2. Passage N: text  (case-insensitive)
+    3. N: text or N. text  (numbered lines, only if line count matches)
+
+    Returns dict mapping passage number to text.
+    """
+    # Pattern 1: canonical PASSAGE N: (case-insensitive)
+    pattern = re.compile(
+        r'PASSAGE\s+(\d+)\s*:\s*(.*?)(?=PASSAGE\s+\d+\s*:|\Z)',
+        re.DOTALL | re.IGNORECASE)
+    matches = pattern.findall(response)
+    if matches:
+        result = {int(num): text.strip() for num, text in matches}
+        if len(result) >= expected_count:
+            return result
+
+    # Pattern 2: numbered lines like "1: text" or "1. text"
+    # Only use if we get exactly the expected count (avoid false positives)
+    numbered_pattern = re.compile(
+        r'^(\d+)[.:]\s*(.*?)(?=^\d+[.:]\s|\Z)',
+        re.DOTALL | re.MULTILINE)
+    numbered_matches = numbered_pattern.findall(response)
+    if len(numbered_matches) == expected_count:
+        return {int(num): text.strip() for num, text in numbered_matches}
+
+    # Return whatever we got from pattern 1 (may be partial)
+    if matches:
+        return {int(num): text.strip() for num, text in matches}
+
+    return {}
+
+
 def _merge_structured(skeleton_segments: list, all_sources: list,
                       config: SpeechConfig, source_paths: list = None,
                       skeleton_source_name: str = "External Transcript") -> list:
@@ -517,7 +554,10 @@ def _merge_structured(skeleton_segments: list, all_sources: list,
 
     Returns list of merged segments (same structure as skeleton_segments).
     """
-    client = create_llm_client(config)
+    merge_cfg = resolve_stage_config(
+        config, config.merge_local, config.merge_model, config.merge_api_key,
+    )
+    client = create_llm_client(merge_cfg)
 
     chunks_dir = _init_merge_chunks_dir(config)
 
@@ -633,8 +673,8 @@ Output the merged passages:"""
         print(f"    Prompt: ~{prompt_words} words ({len(prompt)} chars)")
 
         message = llm_call_with_retry(
-            client, config,
-            model=config.claude_model,
+            client, merge_cfg,
+            model=merge_cfg.claude_model,
             max_tokens=16384,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -642,20 +682,40 @@ Output the merged passages:"""
         response = message.content[0].text.strip()
         print(f"    Response: {len(response)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out")
 
-        # Parse response: PASSAGE N: text
-        passage_pattern = re.compile(
-            r'PASSAGE\s+(\d+)\s*:\s*(.*?)(?=PASSAGE\s+\d+\s*:|\Z)', re.DOTALL)
-        matches = passage_pattern.findall(response)
-        merged_texts = {int(num): text.strip() for num, text in matches}
+        merged_texts = _parse_passage_response(response, len(seg_indices))
+
+        # Retry once if most passages are missing (format drift or truncation)
+        unresolved = len(seg_indices) - len(merged_texts)
+        if unresolved > len(seg_indices) // 2 and len(seg_indices) > 1:
+            print(f"    Only {len(merged_texts)}/{len(seg_indices)} passages parsed, retrying chunk...")
+            # Save raw response for debugging
+            debug_path = chunks_dir / f"chunk_{chunk_idx:03d}_failed_response.txt"
+            debug_path.write_text(response)
+
+            message = llm_call_with_retry(
+                client, merge_cfg,
+                model=merge_cfg.claude_model,
+                max_tokens=16384,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            response = message.content[0].text.strip()
+            print(f"    Retry response: {len(response)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out")
+            retry_texts = _parse_passage_response(response, len(seg_indices))
+            if len(retry_texts) > len(merged_texts):
+                merged_texts = retry_texts
+                debug_path.unlink(missing_ok=True)
 
         # Re-attach structure from skeleton segments
         chunk_result = []
+        unresolved = len(seg_indices) - len(merged_texts)
         for p_idx, seg_idx in enumerate(seg_indices, 1):
             merged = dict(skeleton_segments[seg_idx])
             if p_idx in merged_texts:
                 merged["text"] = merged_texts[p_idx]
             chunk_result.append(merged)
             corrected_segments[seg_idx] = merged
+        if unresolved:
+            print(f"    Warning: {unresolved}/{len(seg_indices)} passage(s) not returned by LLM, keeping original text")
 
         _save_chunk_checkpoint(chunks_dir, chunk_idx, chunk_result)
 
@@ -689,7 +749,10 @@ def _merge_multi_source(sources: list,
     sources: list of (name, description, text) tuples
     source_paths: list of Path objects for staleness checks
     """
-    client = create_llm_client(config)
+    merge_cfg = resolve_stage_config(
+        config, config.merge_local, config.merge_model, config.merge_api_key,
+    )
+    client = create_llm_client(merge_cfg)
 
     chunks_dir = _init_merge_chunks_dir(config)
 
@@ -767,8 +830,8 @@ Output the merged transcript:"""
         print(f"    Prompt: ~{prompt_words} words ({len(prompt)} chars)")
 
         message = llm_call_with_retry(
-            client, config,
-            model=config.claude_model,
+            client, merge_cfg,
+            model=merge_cfg.claude_model,
             max_tokens=16384,
             messages=[{"role": "user", "content": prompt}]
         )

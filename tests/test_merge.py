@@ -27,6 +27,7 @@ from transcribe_critic.merge import (
     _merge_multi_source,
     _merge_structured,
     _normalize_for_comparison,
+    _parse_passage_response,
     _parse_structured_transcript,
     _parse_wdiff_tokens,
     _save_chunk_checkpoint,
@@ -1462,3 +1463,66 @@ class TestWriteTempText:
         finally:
             os.unlink(p1)
             os.unlink(p2)
+
+
+# ---------------------------------------------------------------------------
+# _parse_passage_response
+# ---------------------------------------------------------------------------
+
+class TestParsePassageResponse:
+    def test_canonical_format(self):
+        response = "PASSAGE 1: Hello world.\nPASSAGE 2: Goodbye world."
+        result = _parse_passage_response(response, 2)
+        assert result == {1: "Hello world.", 2: "Goodbye world."}
+
+    def test_case_insensitive(self):
+        response = "Passage 1: Hello world.\nPassage 2: Goodbye world."
+        result = _parse_passage_response(response, 2)
+        assert result == {1: "Hello world.", 2: "Goodbye world."}
+
+    def test_multiline_passage(self):
+        response = "PASSAGE 1: Line one.\nStill passage one.\nPASSAGE 2: Line two."
+        result = _parse_passage_response(response, 2)
+        assert "Line one." in result[1]
+        assert "Still passage one." in result[1]
+        assert result[2] == "Line two."
+
+    def test_numbered_fallback(self):
+        response = "1: Hello world.\n2: Goodbye world."
+        result = _parse_passage_response(response, 2)
+        assert result == {1: "Hello world.", 2: "Goodbye world."}
+
+    def test_numbered_dot_fallback(self):
+        response = "1. Hello world.\n2. Goodbye world."
+        result = _parse_passage_response(response, 2)
+        assert result == {1: "Hello world.", 2: "Goodbye world."}
+
+    def test_numbered_fallback_wrong_count_ignored(self):
+        """Numbered fallback should not fire if count doesn't match expected."""
+        response = "1: Hello.\n2: World.\n3: Extra."
+        result = _parse_passage_response(response, 2)
+        # Should return empty since no PASSAGE pattern and count mismatch
+        assert result == {}
+
+    def test_empty_response(self):
+        result = _parse_passage_response("", 2)
+        assert result == {}
+
+    def test_partial_match(self):
+        """If only some passages matched, return what we have."""
+        response = "PASSAGE 1: Hello world.\nSome random text without passage label."
+        result = _parse_passage_response(response, 2)
+        assert 1 in result
+        assert 2 not in result
+
+    def test_extra_whitespace(self):
+        response = "PASSAGE  1 :  Hello world. \n PASSAGE  2 :  Goodbye. "
+        result = _parse_passage_response(response, 2)
+        assert result[1] == "Hello world."
+        assert result[2] == "Goodbye."
+
+    def test_three_passages(self):
+        response = "PASSAGE 1: First.\nPASSAGE 2: Second.\nPASSAGE 3: Third."
+        result = _parse_passage_response(response, 3)
+        assert len(result) == 3
+        assert result[3] == "Third."

@@ -318,6 +318,7 @@ class TestLoadExternalTranscript:
     def test_url_plain_text(self, mock_urlopen, tmp_path):
         mock_response = MagicMock()
         mock_response.read.return_value = b"Plain transcript text"
+        mock_response.headers.get_content_charset.return_value = None
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -333,6 +334,7 @@ class TestLoadExternalTranscript:
     def test_url_html_calls_extract(self, mock_urlopen, mock_extract, tmp_path):
         mock_response = MagicMock()
         mock_response.read.return_value = b"<html><body>Some HTML</body></html>"
+        mock_response.headers.get_content_charset.return_value = None
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -356,6 +358,7 @@ class TestLoadExternalTranscript:
     def test_url_source_label_from_path(self, mock_urlopen, tmp_path):
         mock_response = MagicMock()
         mock_response.read.return_value = b"text"
+        mock_response.headers.get_content_charset.return_value = None
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response

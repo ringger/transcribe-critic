@@ -39,6 +39,9 @@ Examples:
     # Use Anthropic Claude API instead of local Ollama
     transcribe-critic "https://youtube.com/watch?v=..." --api
 
+    # Per-stage LLM: Claude API for slides and summaries, local for merging
+    transcribe-critic "https://youtube.com/watch?v=..." --slides-api --summary-api
+
     # Custom output directory and model
     transcribe-critic "https://youtube.com/watch?v=..." -o my_speech --whisper-models small
 """
@@ -213,7 +216,9 @@ def _load_external_transcript(config: SpeechConfig) -> tuple:
         import urllib.request
         try:
             with urllib.request.urlopen(source) as response:
-                raw = response.read().decode('utf-8').strip()
+                raw_bytes = response.read()
+                charset = response.headers.get_content_charset() or 'utf-8'
+                raw = raw_bytes.decode(charset, errors='replace').strip()
             if '<html' in raw[:500].lower() or '<body' in raw[:1000].lower():
                 text = _extract_text_from_html(raw)
             else:
@@ -227,7 +232,7 @@ def _load_external_transcript(config: SpeechConfig) -> tuple:
         ext_path = Path(source)
         source_label = ext_path.name
         if ext_path.exists():
-            with open(ext_path, 'r') as f:
+            with open(ext_path, 'r', encoding='utf-8', errors='replace') as f:
                 return f.read().strip(), source_label
         return None, source_label
 
@@ -623,6 +628,12 @@ Examples:
                         help="Scene detection threshold 0-1 (default: 0.1)")
     slides_group.add_argument("--analyze-slides", action="store_true",
                         help="Use Claude vision API to analyze slides (requires API key)")
+    slides_group.add_argument("--slides-api", action="store_true",
+                        help="Use Anthropic API for slide analysis (even if main LLM is local)")
+    slides_group.add_argument("--slides-model",
+                        help="Model for slide analysis (default: same as --claude-model or local vision model)")
+    slides_group.add_argument("--slides-api-key",
+                        help="Separate API key for slide analysis (default: same as --api-key)")
 
     # LLM backend
     llm_group = parser.add_argument_group("LLM backend")
@@ -640,6 +651,12 @@ Examples:
                         help="Skip all LLM-dependent features (merging, ensembling, slide analysis)")
     llm_group.add_argument("--no-merge", action="store_true",
                         help="Skip merging YouTube captions with Whisper (merge is on by default)")
+    llm_group.add_argument("--merge-api", action="store_true",
+                        help="Use Anthropic API for merging/ensembling (even if main LLM is local)")
+    llm_group.add_argument("--merge-model",
+                        help="Model for merging/ensembling (default: same as --claude-model or --local-model)")
+    llm_group.add_argument("--merge-api-key",
+                        help="Separate API key for merging/ensembling (default: same as --api-key)")
 
     # Diarization
     diarize_group = parser.add_argument_group("diarization")
@@ -773,6 +790,12 @@ Examples:
         summary_local=False if args.summary_api else None,
         summary_model=args.summary_model,
         summary_api_key=args.summary_api_key,
+        merge_local=False if args.merge_api else None,
+        merge_model=args.merge_model,
+        merge_api_key=args.merge_api_key,
+        slides_local=False if args.slides_api else None,
+        slides_model=args.slides_model,
+        slides_api_key=args.slides_api_key,
     )
 
     data = SpeechData()
@@ -816,19 +839,25 @@ Examples:
             print("  4. Add --no-llm to skip LLM-dependent features")
             sys.exit(1)
 
-    # Validate summary API key if summary uses cloud API
-    if config.summarize and config.summary_local is False and not config.no_llm:
-        summary_key = config.summary_api_key or config.api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not summary_key:
-            print()
-            print("Error: --summary-api requested but no API key found.")
-            print()
-            print("Options:")
-            print("  1. Use --summary-api-key YOUR_KEY")
-            print("  2. Use --api-key YOUR_KEY (shared with main LLM)")
-            print("  3. Set ANTHROPIC_API_KEY environment variable")
-            print("  4. Remove --summary-api to use local Ollama for summaries")
-            sys.exit(1)
+    # Validate per-stage API keys when cloud API is selected
+    _stage_api_checks = [
+        (config.merge_local, config.merge_api_key, "merge", "merging"),
+        (config.slides_local, config.slides_api_key, "slides", "slide analysis"),
+        (config.summary_local, config.summary_api_key, "summary", "summaries"),
+    ]
+    for stage_local, stage_api_key, flag_name, description in _stage_api_checks:
+        if stage_local is False and not config.no_llm:
+            key = stage_api_key or config.api_key or os.environ.get("ANTHROPIC_API_KEY")
+            if not key:
+                print()
+                print(f"Error: --{flag_name}-api requested but no API key found.")
+                print()
+                print("Options:")
+                print(f"  1. Use --{flag_name}-api-key YOUR_KEY")
+                print("  2. Use --api-key YOUR_KEY (shared with main LLM)")
+                print("  3. Set ANTHROPIC_API_KEY environment variable")
+                print(f"  4. Remove --{flag_name}-api to use local Ollama for {description}")
+                sys.exit(1)
 
     # Show LLM backend info
     if config.no_llm:
@@ -837,6 +866,15 @@ Examples:
         print(f"  LLM: local Ollama ({config.local_model})")
     else:
         print(f"  LLM: Anthropic API ({config.claude_model})")
+    for stage_name, stage_local, stage_model, fallback_local in [
+        ("merge", config.merge_local, config.merge_model, config.local_model),
+        ("slides", config.slides_local, config.slides_model, config.local_vision_model),
+        ("summary", config.summary_local, config.summary_model, config.local_model),
+    ]:
+        if stage_local is not None:
+            label = "Anthropic API" if not stage_local else "local Ollama"
+            model = stage_model or (config.claude_model if not stage_local else fallback_local)
+            print(f"  LLM ({stage_name}): {label} ({model})")
 
     print()
     print(f"Processing: {args.url}")

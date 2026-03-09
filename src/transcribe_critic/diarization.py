@@ -23,7 +23,7 @@ from transcribe_critic.shared import (
 def diarize_audio(config: SpeechConfig, data: SpeechData) -> None:
     """Run speaker diarization on the audio and produce a labeled transcript.
 
-    Stage 2b in the pipeline: runs after transcription, before merge.
+    Runs after transcription and ensemble, before slides and merge.
     """
     if not config.diarize:
         return

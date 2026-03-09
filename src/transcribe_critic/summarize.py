@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from dataclasses import replace
 
 from transcribe_critic.shared import (
     SUMMARY_MD,
@@ -12,6 +11,7 @@ from transcribe_critic.shared import (
     _should_skip,
     create_llm_client,
     llm_call_with_retry,
+    resolve_stage_config,
     tprint as print,
 )
 
@@ -43,30 +43,10 @@ SUMMARY_SYSTEM_PROMPT = (
 
 
 def _resolve_summary_config(config: SpeechConfig) -> SpeechConfig:
-    """Return a SpeechConfig with LLM fields overridden for summarization.
-
-    If summary-specific flags were provided, they override the main LLM
-    backend.  Otherwise the main backend is inherited.
-    """
-    overrides = {}
-
-    if config.summary_local is not None:
-        overrides["local"] = config.summary_local
-
-    effective_local = overrides.get("local", config.local)
-
-    if config.summary_model is not None:
-        if effective_local:
-            overrides["local_model"] = config.summary_model
-        else:
-            overrides["claude_model"] = config.summary_model
-
-    if config.summary_api_key is not None:
-        overrides["api_key"] = config.summary_api_key
-
-    if not overrides:
-        return config
-    return replace(config, **overrides)
+    """Return a SpeechConfig with LLM fields overridden for summarization."""
+    return resolve_stage_config(
+        config, config.summary_local, config.summary_model, config.summary_api_key,
+    )
 
 
 def _get_best_transcript(data: SpeechData) -> str | None:

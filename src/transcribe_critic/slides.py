@@ -15,7 +15,7 @@ from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
     SLIDE_TIMESTAMPS_JSON, SLIDES_TRANSCRIPT_JSON,
-    create_llm_client, llm_call_with_retry,
+    create_llm_client, llm_call_with_retry, resolve_stage_config,
     _save_json, _print_reusing, _dry_run_skip, _should_skip,
 )
 
@@ -128,7 +128,11 @@ def analyze_slides_with_vision(config: SpeechConfig, data: SpeechData) -> None:
             data.slides_json_path = slides_json_path
         return
 
-    client = create_llm_client(config)
+    slides_cfg = resolve_stage_config(
+        config, config.slides_local, config.slides_model, config.slides_api_key,
+        vision=True,
+    )
+    client = create_llm_client(slides_cfg)
 
     slides_metadata = []
 
@@ -141,8 +145,8 @@ def analyze_slides_with_vision(config: SpeechConfig, data: SpeechData) -> None:
 
         # Call vision LLM
         message = llm_call_with_retry(
-            client, config,
-            model=config.claude_model,
+            client, slides_cfg,
+            model=slides_cfg.claude_model,
             max_tokens=1024,
             messages=[
                 {

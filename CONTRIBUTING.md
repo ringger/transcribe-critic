@@ -27,9 +27,10 @@ Source code lives in `src/transcribe_critic/`:
 - `diarization.py` — Speaker diarization (pyannote)
 - `merge.py` — Merge/alignment logic (wdiff, chunking, LLM adjudication)
 - `slides.py` — Slide extraction and vision analysis
+- `summarize.py` — Transcript summarization
 - `output.py` — Markdown generation
 
-Tests are in `tests/`, organized by module: `test_shared.py`, `test_transcriber.py`, `test_transcription.py`, `test_download.py`, `test_merge.py`, `test_output.py`, `test_slides.py`, `test_diarization.py`.
+Tests are in `tests/`, organized by module: `test_shared.py`, `test_transcriber.py`, `test_transcription.py`, `test_download.py`, `test_merge.py`, `test_output.py`, `test_slides.py`, `test_summarize.py`, `test_diarization.py`, `test_pipeline_transitions.py`, and `test_eval_*.py` for the eval harness.
 
 ## Reporting Issues
 

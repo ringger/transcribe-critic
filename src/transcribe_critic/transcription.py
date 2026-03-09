@@ -13,7 +13,7 @@ from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
     WHISPER_MERGED_TXT, COMMON_WORDS, MLX_MODEL_MAP,
-    create_llm_client, llm_call_with_retry,
+    create_llm_client, llm_call_with_retry, resolve_stage_config,
     run_command, _save_json, _print_reusing, _dry_run_skip, _should_skip,
     check_dependencies, MODEL_SIZES,
 )
@@ -129,7 +129,10 @@ def _select_largest_model_json(data: SpeechData):
     """Return the JSON path from the largest available Whisper model."""
     for size in MODEL_SIZES:
         if size in data.whisper_transcripts:
-            return data.whisper_transcripts[size].get("json")
+            json_path = data.whisper_transcripts[size].get("json")
+            if json_path:
+                return json_path
+    print("  Warning: No Whisper JSON with timestamps found")
     return None
 
 
@@ -582,7 +585,10 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
     print(f"  Grouped {total_diffs} diffs into {len(clusters)} cluster(s)")
 
     # Step 3: Resolve each cluster via LLM (with checkpointing)
-    client = create_llm_client(config)
+    merge_cfg = resolve_stage_config(
+        config, config.merge_local, config.merge_model, config.merge_api_key,
+    )
+    client = create_llm_client(merge_cfg)
 
     # Build hallucination warning for prompt
     hallucination_warning = ""
@@ -653,7 +659,7 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
         )
 
         cluster_choices, cluster_resolutions = _call_and_parse_cluster(
-            client, config, cluster, cluster_prompt, hallucination_warning,
+            client, merge_cfg, cluster, cluster_prompt, hallucination_warning,
         )
 
         # If all diffs unresolved, retry without context (may help with content refusals)
@@ -677,7 +683,7 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
 
             print(f"    Retrying cluster {cluster_idx + 1} without context...")
             cluster_choices, cluster_resolutions = _call_and_parse_cluster(
-                client, config, cluster, minimal_prompt, hallucination_warning,
+                client, merge_cfg, cluster, minimal_prompt, hallucination_warning,
             )
 
         # Store resolutions

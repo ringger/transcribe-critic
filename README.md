@@ -20,7 +20,7 @@ The approach applies principles from [textual criticism](https://en.wikipedia.or
 - **Make-style DAG pipeline**: Each stage checks whether its outputs are newer than its inputs, skipping unnecessary work — `--steps` allows re-running specific stages in isolation
 - **Checkpoint resumption**: Long operations save checkpoints and resume after interruption — merge chunks, diarization segmentation, and embedding extraction all checkpoint independently
 - **Cost estimation**: Shows estimated API costs before running (`--dry-run` for estimation only)
-- **Local-first LLM**: Uses Ollama by default for free, local operation — no API key needed
+- **Local-first LLM**: Uses Ollama by default for free, local operation — no API key needed. Each pipeline stage (merge, slides, summary) can independently use a different LLM backend
 - **Speaker diarization**: On by default — identifies who is speaking using pyannote.audio, with automatic or manual speaker naming — LLM speaker identification uses video metadata (title, description) for correct name spellings
 - **Transcript summarization**: Generates a structured summary (overview, key topics, exact notable quotes, speaker identifications) with model attribution — independently configurable LLM backend, can use a different model than the adjudication LLM
 - **Timestamped logging**: All pipeline output prefixed with `[HH:MM:SS]` wall-clock timestamps for log correlation during long runs
@@ -119,8 +119,11 @@ transcribe-critic "https://youtube.com/watch?v=..." \
 # Extract slides and interleave with transcript
 transcribe-critic "https://youtube.com/watch?v=..." --slides
 
-# Also describe slide content with vision API
+# Also describe slide content with vision API (uses main LLM backend)
 transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides
+
+# Use Claude API for slide analysis even when main LLM is local
+transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides --slides-api
 ```
 
 ### Custom Options
@@ -176,6 +179,33 @@ transcribe-critic "https://youtube.com/watch?v=..." --steps summarize -o ./my_tr
 # Disable summarization
 transcribe-critic "https://youtube.com/watch?v=..." --no-summarize
 ```
+
+### Per-Stage LLM Configuration
+
+Each LLM-dependent pipeline stage (merging/ensembling, slide analysis, summarization) can use a different LLM backend. By default all stages inherit the main `--api`/`--local-model` setting. Use per-stage flags to override individually:
+
+```bash
+# Local Ollama for merging, Claude API for slides and summaries
+transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides \
+    --slides-api --summary-api
+
+# Claude API for everything, but use Opus for merging and Sonnet for summaries
+transcribe-critic "https://youtube.com/watch?v=..." --api \
+    --merge-model claude-opus-4-20250514 \
+    --summary-model claude-sonnet-4-20250514
+
+# Each stage can also have its own API key
+transcribe-critic "https://youtube.com/watch?v=..." \
+    --merge-api --merge-api-key sk-merge-key \
+    --slides-api --slides-api-key sk-slides-key \
+    --summary-api --summary-api-key sk-summary-key
+```
+
+| Stage | `--*-api` | `--*-model` | `--*-api-key` |
+|-------|-----------|-------------|---------------|
+| Merge/ensemble | `--merge-api` | `--merge-model` | `--merge-api-key` |
+| Slide analysis | `--slides-api` | `--slides-model` | `--slides-api-key` |
+| Summarization | `--summary-api` | `--summary-model` | `--summary-api-key` |
 
 ## Output Files
 

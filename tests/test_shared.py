@@ -26,6 +26,7 @@ from transcribe_critic.shared import (
     create_llm_client,
     is_up_to_date,
     llm_call_with_retry,
+    resolve_stage_config,
     run_command,
 )
 
@@ -858,3 +859,89 @@ class TestShouldSkip:
         out.write_text("result")
         config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
         assert _should_skip(config, out, "process data", inp) is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_stage_config
+# ---------------------------------------------------------------------------
+
+class TestResolveStageConfig:
+    @pytest.fixture
+    def base_config(self, tmp_path):
+        return SpeechConfig(
+            url="x", output_dir=tmp_path,
+            local=True, local_model="qwen2.5:14b",
+            local_vision_model="llava",
+            claude_model="claude-sonnet-4-20250514",
+            api_key="sk-main",
+        )
+
+    def test_no_overrides_returns_same_config(self, base_config):
+        result = resolve_stage_config(base_config, None, None, None)
+        assert result is base_config
+
+    def test_stage_local_false_switches_to_api(self, base_config):
+        result = resolve_stage_config(base_config, False, None, None)
+        assert result.local is False
+        # Other fields should be inherited
+        assert result.claude_model == base_config.claude_model
+        assert result.api_key == base_config.api_key
+
+    def test_stage_local_true_stays_local(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path, local=False)
+        result = resolve_stage_config(config, True, None, None)
+        assert result.local is True
+
+    def test_stage_model_overrides_claude_model_when_api(self, base_config):
+        result = resolve_stage_config(base_config, False, "claude-opus-4-20250514", None)
+        assert result.local is False
+        assert result.claude_model == "claude-opus-4-20250514"
+
+    def test_stage_model_overrides_local_model_when_local(self, base_config):
+        result = resolve_stage_config(base_config, None, "llama3.3", None)
+        assert result.local is True
+        assert result.local_model == "llama3.3"
+        # Vision model should be unchanged
+        assert result.local_vision_model == "llava"
+
+    def test_vision_flag_overrides_vision_model(self, base_config):
+        result = resolve_stage_config(base_config, None, "llava-custom", None, vision=True)
+        assert result.local_vision_model == "llava-custom"
+        # Text model should be unchanged
+        assert result.local_model == "qwen2.5:14b"
+
+    def test_vision_flag_with_api_overrides_claude_model(self, base_config):
+        result = resolve_stage_config(base_config, False, "claude-opus-4-20250514", None, vision=True)
+        assert result.claude_model == "claude-opus-4-20250514"
+
+    def test_stage_api_key_overrides(self, base_config):
+        result = resolve_stage_config(base_config, None, None, "sk-stage")
+        assert result.api_key == "sk-stage"
+
+    def test_all_overrides_combined(self, base_config):
+        result = resolve_stage_config(base_config, False, "claude-opus-4-20250514", "sk-stage")
+        assert result.local is False
+        assert result.claude_model == "claude-opus-4-20250514"
+        assert result.api_key == "sk-stage"
+        # Original config should be unchanged
+        assert base_config.local is True
+        assert base_config.claude_model == "claude-sonnet-4-20250514"
+        assert base_config.api_key == "sk-main"
+
+    def test_does_not_mutate_original_config(self, base_config):
+        resolve_stage_config(base_config, False, "other-model", "sk-other")
+        assert base_config.local is True
+        assert base_config.claude_model == "claude-sonnet-4-20250514"
+        assert base_config.api_key == "sk-main"
+
+    def test_inherits_local_from_config_when_stage_local_none(self, tmp_path):
+        """When stage_local is None, model override uses config.local to decide field."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, local=False)
+        result = resolve_stage_config(config, None, "custom-model", None)
+        assert result.claude_model == "custom-model"
+
+    def test_stage_local_determines_model_field(self, base_config):
+        """stage_local=False + model should override claude_model, not local_model."""
+        result = resolve_stage_config(base_config, False, "custom-api-model", None)
+        assert result.claude_model == "custom-api-model"
+        assert result.local_model == base_config.local_model  # unchanged

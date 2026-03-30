@@ -46,3 +46,9 @@ eval-runs/
 # Build artifacts
 dist/
 build/
+
+# Downloaded reference PDFs
+*.pdf
+
+# Pipeline logs
+logs/

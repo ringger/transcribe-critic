@@ -40,6 +40,41 @@ MLX_MODEL_MAP = {
     "distil-large-v3": "mlx-community/distil-whisper-large-v3",
 }
 
+# Quality ranking for all ASR models (higher = better, used for ensemble base selection)
+WHISPER_QUALITY_RANK = {
+    "large": 6, "distil-large-v3": 5, "medium": 4,
+    "small": 3, "base": 2, "tiny": 1,
+}
+
+# Non-Whisper ASR model registry: short name -> config
+ASR_MODEL_REGISTRY = {
+    "granite-speech": {
+        "hf_id": "mlx-community/granite-4.0-1b-speech-8bit",
+        "backend": "mlx_audio",
+        "quality_rank": 9,   # 5.52% avg WER on Open ASR Leaderboard
+    },
+    "qwen3-asr": {
+        "hf_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
+        "backend": "mlx_audio",
+        "quality_rank": 8,   # 5.76%
+    },
+    "parakeet": {
+        "hf_id": "mlx-community/parakeet-tdt-0.6b-v2",
+        "backend": "parakeet_mlx",
+        "quality_rank": 7,   # 6.05%
+    },
+}
+
+
+def get_model_quality_rank(model_name: str) -> int:
+    """Return quality rank for any ASR model (Whisper or non-Whisper)."""
+    if model_name in WHISPER_QUALITY_RANK:
+        return WHISPER_QUALITY_RANK[model_name]
+    entry = ASR_MODEL_REGISTRY.get(model_name)
+    if entry:
+        return entry["quality_rank"]
+    return 0
+
 # Default LLM model names
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_LOCAL_MODEL = "qwen2.5:14b"
@@ -63,6 +98,7 @@ class SpeechConfig:
     url: str
     output_dir: Path
     whisper_models: list = field(default_factory=lambda: list(DEFAULT_WHISPER_MODELS))  # Can be multiple models
+    asr_models: list = field(default_factory=list)  # Non-Whisper ASR models (see ASR_MODEL_REGISTRY)
     scene_threshold: float = 0.1
     analyze_slides: bool = False
     merge_sources: bool = True  # Merge YouTube captions with Whisper (default: on)
@@ -408,6 +444,8 @@ def check_dependencies() -> dict[str, bool]:
         "ffmpeg": False,
         "mlx_whisper": False,
         "whisper": False,
+        "parakeet_mlx": False,
+        "mlx_audio": False,
     }
 
     # Check command-line tools
@@ -415,16 +453,11 @@ def check_dependencies() -> dict[str, bool]:
         deps[tool] = shutil.which(tool) is not None
 
     # Check Python packages
-    try:
-        import mlx_whisper
-        deps["mlx_whisper"] = True
-    except ImportError:
-        pass
-
-    try:
-        import whisper
-        deps["whisper"] = True
-    except ImportError:
-        pass
+    for pkg in ["mlx_whisper", "whisper", "parakeet_mlx", "mlx_audio"]:
+        try:
+            __import__(pkg)
+            deps[pkg] = True
+        except ImportError:
+            pass
 
     return deps

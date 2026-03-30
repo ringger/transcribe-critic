@@ -90,9 +90,33 @@ The 3-way ensemble doesn't improve over distil-large-v3 alone. On file 4, mergin
 4. **Anti-hallucination flags are essential.** They prevent catastrophic failures and improve ensemble signal.
 5. **distil-large-v3 is the best single model.** Faster than large, no hallucination, better WER than medium.
 
+### 14. Non-Whisper ASR Backends (2026-03-30)
+
+The [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard) (Aug 2025) shows Whisper is no longer competitive on standard benchmarks. The top open models achieve ~5-6% avg WER vs Whisper large-v3's ~9-10%. Three models with MLX support were added to the pipeline:
+
+| Model | Leaderboard WER | Params | Backend | Architecture |
+|-------|----------------|--------|---------|-------------|
+| ibm-granite/granite-4.0-1b-speech | 5.52% | 1B | mlx-audio | Conformer + LLM decoder |
+| Qwen/Qwen3-ASR-1.7B | 5.76% | 1.7B | mlx-audio | LLM-based encoder-decoder |
+| nvidia/parakeet-tdt-0.6b-v2 | 6.05% | 0.6B | parakeet-mlx | FastConformer-TDT |
+
+**Hypothesis:** Architecturally diverse models should provide better ensemble diversity than combining Whisper sizes, since the 3-way Whisper ensemble (26.5%) failed to improve over distil-large-v3 alone (26.3%).
+
+**Implementation notes:**
+- `--asr-models parakeet,qwen3-asr,granite-speech` CLI flag added alongside `--whisper-models`
+- ASR outputs named `asr_{model}.txt/.json` (vs `whisper_{model}.txt/.json`)
+- Granite-speech requires manual 240s audio chunking (no built-in long-audio support in mlx-audio); exhibited hallucination loops (caught by existing collapse logic)
+- Parakeet handles long audio natively (120s chunks), produces word-level timestamps
+- Qwen3-ASR handles long audio natively (1200s chunks), chunk-level timestamps only
+
+**Rev16 results (files 3, 4, 9):**
+
+_Results pending — eval run in progress._
+
 ## Next Steps
 
-- Try 2-way ensemble: distil-large-v3 + medium (skip small, which is consistently weakest)
+- Score new ASR models and mixed ensembles on Rev16
+- Try 2-way ensembles: distil-large-v3 + parakeet, distil-large-v3 + granite-speech
 - Expand eval to more Rev16 files for statistical significance
 - Test with a local adjudicator closer to Sonnet quality (e.g., Llama 3.3 70B)
 
@@ -102,4 +126,5 @@ The 3-way ensemble doesn't improve over distil-large-v3 alone. On file 4, mergin
 - LLM (local): Ollama qwen2.5:14b (9GB)
 - LLM (API): Claude Sonnet 4 (claude-sonnet-4-20250514)
 - Whisper models: small, medium, distil-large-v3 (mlx-community/distil-whisper-large-v3)
+- ASR models: parakeet-tdt-0.6b-v2, Qwen3-ASR-1.7B-8bit, granite-4.0-1b-speech-8bit
 - Scoring: meeteval WER

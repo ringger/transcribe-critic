@@ -129,6 +129,11 @@ def _discover_hypotheses(output_dir: Path) -> list[tuple[str, Path]]:
         if txt.exists():
             hypotheses.append((f"whisper_{model}", txt))
 
+    # Non-Whisper ASR model outputs
+    for txt in sorted(output_dir.glob("asr_*.txt")):
+        name = txt.stem  # e.g. "asr_parakeet"
+        hypotheses.append((name, txt))
+
     # Whisper-merged (adjudicated from multiple models)
     wm = output_dir / WHISPER_MERGED_TXT
     if wm.exists():

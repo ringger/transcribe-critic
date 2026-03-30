@@ -33,6 +33,12 @@ dependencies = [
 
 [project.optional-dependencies]
 diarize = ["pyannote.audio"]
+parakeet = ["parakeet-mlx; platform_machine == 'arm64' and sys_platform == 'darwin'"]
+mlx-audio = ["mlx-audio; platform_machine == 'arm64' and sys_platform == 'darwin'"]
+asr = [
+    "parakeet-mlx; platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "mlx-audio; platform_machine == 'arm64' and sys_platform == 'darwin'",
+]
 eval = [
     "meeteval",
     "datasets",

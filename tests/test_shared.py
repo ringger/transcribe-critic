@@ -14,6 +14,9 @@ from conftest import make_openai_response
 from transcribe_critic.shared import (
     SpeechConfig,
     SpeechData,
+    ASR_MODEL_REGISTRY,
+    WHISPER_QUALITY_RANK,
+    get_model_quality_rank,
     _NormalizedResponse,
     _collect_source_paths,
     _convert_messages_to_openai,
@@ -945,3 +948,68 @@ class TestResolveStageConfig:
         result = resolve_stage_config(base_config, False, "custom-api-model", None)
         assert result.claude_model == "custom-api-model"
         assert result.local_model == base_config.local_model  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# ASR model registry and quality ranking
+# ---------------------------------------------------------------------------
+
+class TestASRModelRegistry:
+    def test_registry_has_expected_models(self):
+        assert "granite-speech" in ASR_MODEL_REGISTRY
+        assert "qwen3-asr" in ASR_MODEL_REGISTRY
+        assert "parakeet" in ASR_MODEL_REGISTRY
+
+    def test_registry_entries_have_required_keys(self):
+        for name, entry in ASR_MODEL_REGISTRY.items():
+            assert "hf_id" in entry, f"{name} missing hf_id"
+            assert "backend" in entry, f"{name} missing backend"
+            assert "quality_rank" in entry, f"{name} missing quality_rank"
+
+    def test_backends_are_valid(self):
+        valid = {"parakeet_mlx", "mlx_audio"}
+        for name, entry in ASR_MODEL_REGISTRY.items():
+            assert entry["backend"] in valid, f"{name} has unknown backend {entry['backend']}"
+
+
+class TestGetModelQualityRank:
+    def test_whisper_models(self):
+        assert get_model_quality_rank("large") == 6
+        assert get_model_quality_rank("small") == 3
+        assert get_model_quality_rank("tiny") == 1
+
+    def test_asr_models(self):
+        assert get_model_quality_rank("granite-speech") == 9
+        assert get_model_quality_rank("qwen3-asr") == 8
+        assert get_model_quality_rank("parakeet") == 7
+
+    def test_unknown_model_returns_zero(self):
+        assert get_model_quality_rank("nonexistent") == 0
+
+    def test_asr_models_rank_above_whisper(self):
+        best_whisper = max(WHISPER_QUALITY_RANK.values())
+        for name, entry in ASR_MODEL_REGISTRY.items():
+            assert entry["quality_rank"] > best_whisper, (
+                f"{name} should rank above best Whisper model"
+            )
+
+    def test_ranking_order_matches_leaderboard(self):
+        assert get_model_quality_rank("granite-speech") > get_model_quality_rank("qwen3-asr")
+        assert get_model_quality_rank("qwen3-asr") > get_model_quality_rank("parakeet")
+
+
+class TestCheckDependencies:
+    def test_returns_asr_backend_keys(self):
+        deps = check_dependencies()
+        assert "parakeet_mlx" in deps
+        assert "mlx_audio" in deps
+
+
+class TestSpeechConfigASR:
+    def test_asr_models_defaults_empty(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        assert config.asr_models == []
+
+    def test_asr_models_can_be_set(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path, asr_models=["parakeet"])
+        assert config.asr_models == ["parakeet"]

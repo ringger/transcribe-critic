@@ -21,8 +21,10 @@ from transcribe_critic.transcription import (
     _load_transcript_segments,
     _merge_pairwise_diffs,
     _parse_wdiff_diffs,
+    _run_asr_model,
     _run_whisper_model,
     _select_largest_model_json,
+    _split_audio_chunks,
     collapse_repetition_loops,
     detect_repetition_loops,
     transcribe_audio,
@@ -1083,5 +1085,176 @@ class TestEnsembleDryRunCheckpoints:
         out = capsys.readouterr().out
         assert "[dry-run]" in out
         assert "clusters cached" in out
+
+
+# ---------------------------------------------------------------------------
+# Non-Whisper ASR model dispatch
+# ---------------------------------------------------------------------------
+
+class TestRunASRModel:
+    def test_dry_run_skips_execution(self, tmp_path, capsys):
+        config = SpeechConfig(url="x", output_dir=tmp_path, dry_run=True,
+                              skip_existing=False)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.wav"
+        data.audio_path.write_bytes(b"fake")
+        deps = {"parakeet_mlx": True, "mlx_audio": True}
+
+        _run_asr_model(config, data, "parakeet", deps)
+        out = capsys.readouterr().out
+        assert "[dry-run]" in out
+        assert "parakeet" not in data.whisper_transcripts
+
+    def test_skip_existing_reuses_cached(self, tmp_path, capsys):
+        audio = tmp_path / "audio.wav"
+        audio.write_bytes(b"fake")
+        import time; time.sleep(0.05)
+        (tmp_path / "asr_parakeet.txt").write_text("cached text")
+
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=True)
+        data = SpeechData()
+        data.audio_path = audio
+        deps = {"parakeet_mlx": True, "mlx_audio": True}
+
+        _run_asr_model(config, data, "parakeet", deps)
+        assert "parakeet" in data.whisper_transcripts
+        assert data.whisper_transcripts["parakeet"]["txt"] == tmp_path / "asr_parakeet.txt"
+
+    def test_missing_backend_raises(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.wav"
+        data.audio_path.write_bytes(b"fake")
+        deps = {"parakeet_mlx": False, "mlx_audio": False}
+
+        with pytest.raises(RuntimeError, match="requires parakeet-mlx"):
+            _run_asr_model(config, data, "parakeet", deps)
+
+    def test_missing_mlx_audio_backend_raises(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.wav"
+        data.audio_path.write_bytes(b"fake")
+        deps = {"parakeet_mlx": False, "mlx_audio": False}
+
+        with pytest.raises(RuntimeError, match="requires mlx-audio"):
+            _run_asr_model(config, data, "granite-speech", deps)
+
+
+class TestSelectLargestModelJsonRanked:
+    def test_prefers_highest_ranked(self, tmp_path):
+        data = SpeechData()
+        data.whisper_transcripts = {
+            "small": {"txt": tmp_path / "whisper_small.txt", "json": tmp_path / "whisper_small.json"},
+            "granite-speech": {"txt": tmp_path / "asr_granite-speech.txt", "json": tmp_path / "asr_granite-speech.json"},
+        }
+        result = _select_largest_model_json(data)
+        assert result == tmp_path / "asr_granite-speech.json"
+
+    def test_falls_back_when_best_has_no_json(self, tmp_path):
+        data = SpeechData()
+        data.whisper_transcripts = {
+            "small": {"txt": tmp_path / "whisper_small.txt", "json": tmp_path / "whisper_small.json"},
+            "granite-speech": {"txt": tmp_path / "asr_granite-speech.txt", "json": None},
+        }
+        result = _select_largest_model_json(data)
+        assert result == tmp_path / "whisper_small.json"
+
+
+class TestTranscribeAudioWithASR:
+    def test_no_models_raises(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path,
+                              whisper_models=[], asr_models=[])
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.wav"
+        data.audio_path.write_bytes(b"fake")
+        with pytest.raises(RuntimeError, match="No transcription models"):
+            transcribe_audio(config, data)
+
+
+# ---------------------------------------------------------------------------
+# Audio chunking for models without built-in chunking
+# ---------------------------------------------------------------------------
+
+class TestSplitAudioChunks:
+    def test_short_audio_returns_single_chunk(self, tmp_path):
+        """Audio shorter than chunk_secs should return the original path."""
+        audio = tmp_path / "short.wav"
+        # Create a minimal WAV file (1 second of silence at 16kHz mono)
+        import struct
+        sample_rate = 16000
+        num_samples = sample_rate  # 1 second
+        data_size = num_samples * 2  # 16-bit samples
+        with open(audio, 'wb') as f:
+            # RIFF header
+            f.write(b'RIFF')
+            f.write(struct.pack('<I', 36 + data_size))
+            f.write(b'WAVE')
+            # fmt chunk
+            f.write(b'fmt ')
+            f.write(struct.pack('<I', 16))  # chunk size
+            f.write(struct.pack('<HHIIHH', 1, 1, sample_rate, sample_rate * 2, 2, 16))
+            # data chunk
+            f.write(b'data')
+            f.write(struct.pack('<I', data_size))
+            f.write(b'\x00' * data_size)
+
+        chunks = _split_audio_chunks(audio, chunk_secs=60.0)
+        assert len(chunks) == 1
+        assert chunks[0] == (audio, 0.0)
+
+    def test_long_audio_splits_into_multiple_chunks(self, tmp_path):
+        """Audio longer than chunk_secs should be split."""
+        audio = tmp_path / "long.wav"
+        # Create a 10-second WAV file
+        import struct
+        sample_rate = 16000
+        num_samples = sample_rate * 10  # 10 seconds
+        data_size = num_samples * 2
+        with open(audio, 'wb') as f:
+            f.write(b'RIFF')
+            f.write(struct.pack('<I', 36 + data_size))
+            f.write(b'WAVE')
+            f.write(b'fmt ')
+            f.write(struct.pack('<I', 16))
+            f.write(struct.pack('<HHIIHH', 1, 1, sample_rate, sample_rate * 2, 2, 16))
+            f.write(b'data')
+            f.write(struct.pack('<I', data_size))
+            f.write(b'\x00' * data_size)
+
+        chunks = _split_audio_chunks(audio, chunk_secs=4.0, overlap_secs=1.0)
+        assert len(chunks) >= 3  # 10s / (4-1)s = ~3.3 chunks
+        # First chunk starts at 0
+        assert chunks[0][1] == 0.0
+        # Chunks should have increasing offsets
+        offsets = [c[1] for c in chunks]
+        assert offsets == sorted(offsets)
+        # All chunk files should exist
+        for path, _ in chunks:
+            assert path.exists()
+
+    def test_overlap_provides_context(self, tmp_path):
+        """Chunks should overlap by overlap_secs."""
+        audio = tmp_path / "overlap.wav"
+        import struct
+        sample_rate = 16000
+        num_samples = sample_rate * 12  # 12 seconds
+        data_size = num_samples * 2
+        with open(audio, 'wb') as f:
+            f.write(b'RIFF')
+            f.write(struct.pack('<I', 36 + data_size))
+            f.write(b'WAVE')
+            f.write(b'fmt ')
+            f.write(struct.pack('<I', 16))
+            f.write(struct.pack('<HHIIHH', 1, 1, sample_rate, sample_rate * 2, 2, 16))
+            f.write(b'data')
+            f.write(struct.pack('<I', data_size))
+            f.write(b'\x00' * data_size)
+
+        chunks = _split_audio_chunks(audio, chunk_secs=5.0, overlap_secs=2.0)
+        offsets = [c[1] for c in chunks]
+        # Stride should be chunk_secs - overlap_secs = 3.0
+        for i in range(1, len(offsets)):
+            assert offsets[i] - offsets[i-1] == pytest.approx(3.0, abs=0.1)
 
 

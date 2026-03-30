@@ -12,7 +12,7 @@ The approach applies principles from [textual criticism](https://en.wikipedia.or
 
 - **Critical text merging**: Combines 2–3+ transcript sources into the most accurate version using blind, anonymous presentation to an LLM — no source receives preferential treatment
 - **wdiff-based alignment**: Uses longest common subsequence alignment (via `wdiff`) to keep chunks properly aligned across sources of different lengths, replacing naive proportional slicing
-- **Multi-model Whisper ensembling**: Runs multiple Whisper models (default: small + medium + distil-large-v3) and resolves disagreements via LLM with anonymous A/B/C labels
+- **Multi-model ASR ensembling**: Runs multiple ASR models (Whisper and/or non-Whisper) and resolves disagreements via LLM with anonymous A/B/C labels — supports mixing architecturally diverse models for better ensemble diversity
 - **Anti-hallucination**: Whisper runs use `condition_on_previous_text=False` and other flags to prevent cascading hallucination; residual repetition loops are automatically detected and collapsed
 - **External transcript support**: Merges in human-edited transcripts (e.g., from publisher websites) as an additional source
 - **Structured transcript preservation**: When external transcripts have speaker labels and timestamps, the merged output preserves that structure
@@ -55,6 +55,7 @@ cd transcribe-critic
 pip install -e .          # editable install
 pip install -e .[dev]     # with test dependencies
 pip install -e .[diarize] # with speaker diarization
+pip install -e .[asr]     # with non-Whisper ASR backends (Granite, Parakeet, Qwen3)
 ```
 
 ## Quick Start
@@ -134,6 +135,14 @@ transcribe-critic "https://youtube.com/watch?v=..." -o ./my_transcript
 
 # Use specific Whisper models (default: small,medium,distil-large-v3)
 transcribe-critic "https://youtube.com/watch?v=..." --whisper-models medium,distil-large-v3
+
+# Use non-Whisper ASR models (requires pip install transcribe-critic[asr])
+transcribe-critic "https://youtube.com/watch?v=..." --whisper-models distil-large-v3 \
+    --asr-models granite-speech,parakeet
+
+# Non-Whisper only (no Whisper models)
+transcribe-critic "https://youtube.com/watch?v=..." --whisper-models "" \
+    --asr-models granite-speech,parakeet,qwen3-asr
 
 # Use a different local model
 transcribe-critic "https://youtube.com/watch?v=..." --local-model llama3.3
@@ -222,7 +231,11 @@ output_dir/
 ├── whisper_medium.json            # Whisper medium with timestamps
 ├── whisper_distil-large-v3.txt    # Whisper distil-large-v3 transcript
 ├── whisper_distil-large-v3.json   # Whisper distil-large-v3 with timestamps
-├── whisper_merged.txt             # Merged from multiple Whisper models via adjudication
+├── asr_granite-speech.txt         # (if --asr-models includes granite-speech)
+├── asr_granite-speech.json        # (if --asr-models includes granite-speech)
+├── asr_parakeet.txt               # (if --asr-models includes parakeet)
+├── asr_parakeet.json              # (if --asr-models includes parakeet)
+├── whisper_merged.txt             # Merged from multiple ASR models via adjudication
 ├── diarization.json              # Speaker segments (default; skipped with --no-diarize)
 ├── diarization_segmentation.npy  # Cached segmentation (default; skipped with --no-diarize)
 ├── diarization_embeddings.npy    # Cached embeddings (default; skipped with --no-diarize)
@@ -249,8 +262,8 @@ Optional stages are skipped based on flags. Stage numbers are fixed regardless o
 | Stage | Step name | Tool | Optional |
 |-------|-----------|------|----------|
 | [1] Download media | `download` | yt-dlp | No |
-| [2] Transcribe audio | `transcribe` | mlx-whisper | No |
-| [2b] Whisper ensemble | `ensemble` | LLM + wdiff | Yes (on by default with 2+ models; default: 3 models) |
+| [2] Transcribe audio | `transcribe` | mlx-whisper, parakeet-mlx, mlx-audio | No |
+| [2b] ASR ensemble | `ensemble` | LLM + wdiff | Yes (on by default with 2+ models; default: 3 Whisper models) |
 | [2c] Speaker diarization | `diarize` | pyannote.audio | Yes (on by default; `--no-diarize` to skip) |
 | [3] Extract slides | `slides` | ffmpeg | Yes (off by default; `--slides` to enable) |
 | [4] Analyze slides with vision | `slides` | LLM + vision | Yes (`--analyze-slides`) |
@@ -364,18 +377,20 @@ However, stronger models can also overcorrect. In one case, all three Whisper mo
 
 The lesson: stronger LLMs are better adjudicators overall, but they are also more willing to override unanimous source agreement when their priors suggest a "more likely" reading. Unfamiliar but correct proper nouns are the primary risk. See [docs/transcript-sources.md](docs/transcript-sources.md) for more on source quality characteristics.
 
-### Multi-Model Whisper Merging
+### Multi-Model ASR Merging
 
-When using multiple Whisper models (default: `small,medium,distil-large-v3`):
+When using multiple ASR models (default: `small,medium,distil-large-v3` Whisper models; optionally add `--asr-models granite-speech,parakeet,qwen3-asr`):
 
-1. Runs each model independently with anti-hallucination flags
-2. Uses `wdiff` to identify specific word-level differences between each non-base model and the base (largest model)
+1. Runs each model independently (Whisper with anti-hallucination flags; non-Whisper via their native libraries)
+2. Uses `wdiff` to identify specific word-level differences between each non-base model and the base (highest-ranked model by quality)
 3. For 3+ models, merges pairwise diffs at the same positions into unified diffs with per-model readings
 4. Clusters nearby differences and presents each cluster to an LLM with anonymous labels (A/B or A/B/C) and surrounding context — model names are never revealed
 5. The LLM picks a letter for each disagreement — constrained to choose between actual transcriptions, preventing hallucinated text
 6. Chosen readings are surgically applied to the base transcript, leaving uncontested regions untouched
 
-This targeted diff resolution avoids the problems of full-text rewriting (chunk-boundary duplication, errors in uncontested regions, wasted tokens). The implementation runs Whisper-vs-Whisper adjudication first to produce a single merged Whisper witness (`whisper_merged.txt`), which then enters the multi-source merge alongside captions and external transcripts.
+This targeted diff resolution avoids the problems of full-text rewriting (chunk-boundary duplication, errors in uncontested regions, wasted tokens). The implementation runs model-vs-model adjudication first to produce a single merged witness (`whisper_merged.txt`), which then enters the multi-source merge alongside captions and external transcripts.
+
+Mixing architecturally diverse models (e.g., Whisper encoder-decoder + Granite conformer+LLM + Parakeet FastConformer-TDT) provides better ensemble diversity than combining multiple Whisper sizes alone.
 
 ### Speaker Diarization
 
@@ -459,6 +474,18 @@ pip install mlx-whisper    # Apple Silicon
 pip install openai-whisper # Other platforms
 ```
 
+### "Model 'granite-speech' requires mlx-audio"
+
+Non-Whisper ASR backends are optional extras. Install what you need:
+
+```bash
+pip install 'transcribe-critic[asr]'       # All backends (parakeet-mlx + mlx-audio)
+pip install 'transcribe-critic[parakeet]'   # Parakeet only
+pip install 'transcribe-critic[mlx-audio]'  # Granite + Qwen3-ASR only
+```
+
+These are Apple Silicon only (ARM64 macOS).
+
 ### wdiff not found
 
 Required for alignment-based merging:
@@ -498,6 +525,8 @@ MIT
 - [OpenAI Whisper](https://github.com/openai/whisper) — Speech recognition
 - [Distil-Whisper](https://github.com/huggingface/distil-whisper) — Distilled large-v3 model (faster, fewer hallucinations)
 - [MLX Whisper](https://github.com/ml-explore/mlx-examples) — Apple Silicon optimization
+- [parakeet-mlx](https://github.com/senstella/parakeet-mlx) — NVIDIA Parakeet on Apple Silicon
+- [mlx-audio](https://github.com/Blaizzy/mlx-audio) — Multi-model ASR on Apple Silicon (Granite, Qwen3-ASR)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — Media downloading
 - [Anthropic Claude](https://www.anthropic.com/) — LLM-based adjudication and vision analysis
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio) — Speaker diarization

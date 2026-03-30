@@ -1,8 +1,10 @@
 """
 Transcription module for the speech transcription pipeline.
 
-Handles speech-to-text transcription with Whisper models, including
-multi-model ensembling via wdiff analysis and LLM adjudication.
+Handles speech-to-text transcription with multiple ASR backends (Whisper via
+mlx-whisper/openai-whisper, Parakeet via parakeet-mlx, Granite/Qwen3 via
+mlx-audio), including multi-model ensembling via wdiff analysis and LLM
+adjudication.
 """
 
 import json
@@ -14,6 +16,7 @@ from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
     WHISPER_MERGED_TXT, COMMON_WORDS, MLX_MODEL_MAP,
+    ASR_MODEL_REGISTRY, get_model_quality_rank,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
     run_command, _save_json, _print_reusing, _dry_run_skip, _should_skip,
     check_dependencies, MODEL_SIZES,
@@ -127,13 +130,14 @@ def collapse_repetition_loops(text: str, min_repeats: int = 4,
 
 
 def _select_largest_model_json(data: SpeechData):
-    """Return the JSON path from the largest available Whisper model."""
-    for size in MODEL_SIZES:
-        if size in data.whisper_transcripts:
-            json_path = data.whisper_transcripts[size].get("json")
-            if json_path:
-                return json_path
-    print("  Warning: No Whisper JSON with timestamps found")
+    """Return the JSON path from the highest-ranked available model."""
+    ranked = sorted(data.whisper_transcripts.keys(),
+                    key=get_model_quality_rank, reverse=True)
+    for model in ranked:
+        json_path = data.whisper_transcripts[model].get("json")
+        if json_path:
+            return json_path
+    print("  Warning: No ASR JSON with timestamps found")
     return None
 
 
@@ -748,7 +752,7 @@ def _apply_resolutions(base_words: list[str], diffs: list[dict],
 
 
 def transcribe_audio(config: SpeechConfig, data: SpeechData) -> None:
-    """Transcribe audio using Whisper, supporting multiple models for ensembling."""
+    """Transcribe audio using Whisper and/or non-Whisper ASR models."""
     print()
     print("[transcribe] Transcribing audio...")
 
@@ -756,19 +760,30 @@ def transcribe_audio(config: SpeechConfig, data: SpeechData) -> None:
         raise FileNotFoundError(f"Audio file not found: {data.audio_path}")
 
     deps = check_dependencies()
-    if not deps["mlx_whisper"] and not deps["whisper"]:
+
+    whisper_models = config.whisper_models
+    asr_models = config.asr_models
+    all_models = whisper_models + asr_models
+
+    if not all_models:
+        raise RuntimeError("No transcription models specified.")
+
+    if whisper_models and not deps["mlx_whisper"] and not deps["whisper"]:
         raise RuntimeError("No Whisper implementation found. Install mlx-whisper or openai-whisper.")
 
-    models = config.whisper_models
-    print(f"  Models to run: {', '.join(models)}")
+    print(f"  Models to run: {', '.join(all_models)}")
 
-    # Run each model
-    for model in models:
+    # Run Whisper models
+    for model in whisper_models:
         _run_whisper_model(config, data, model, deps)
 
+    # Run non-Whisper ASR models
+    for short_name in asr_models:
+        _run_asr_model(config, data, short_name, deps)
+
     # Single model - use it directly (ensemble handled by pipeline)
-    if len(models) == 1:
-        model = models[0]
+    if len(all_models) == 1:
+        model = all_models[0]
         if model in data.whisper_transcripts:
             data.transcript_path = data.whisper_transcripts[model]["txt"]
             data.transcript_json_path = data.whisper_transcripts[model].get("json")
@@ -878,6 +893,227 @@ def _run_whisper_model(config: SpeechConfig, data: SpeechData, model: str, deps:
     print(f"  {model} transcript saved: {txt_path.name}")
 
 
+# ---------------------------------------------------------------------------
+# Non-Whisper ASR backends (parakeet-mlx, mlx-audio)
+# ---------------------------------------------------------------------------
+
+def _run_asr_model(config: SpeechConfig, data: SpeechData, short_name: str, deps: dict) -> None:
+    """Run a non-Whisper ASR model and save output."""
+    entry = ASR_MODEL_REGISTRY[short_name]
+    backend = entry["backend"]
+    hf_id = entry["hf_id"]
+
+    txt_path = config.output_dir / f"asr_{short_name}.txt"
+    json_path = config.output_dir / f"asr_{short_name}.json"
+
+    if _should_skip(config, txt_path, f"transcribe with {short_name}", data.audio_path):
+        if txt_path.exists():
+            data.whisper_transcripts[short_name] = {
+                "txt": txt_path,
+                "json": json_path if json_path.exists() else None,
+            }
+        return
+
+    # Check backend availability
+    if not deps.get(backend, False):
+        pkg = "parakeet-mlx" if backend == "parakeet_mlx" else "mlx-audio"
+        extra = "parakeet" if backend == "parakeet_mlx" else "mlx-audio"
+        raise RuntimeError(
+            f"Model '{short_name}' requires {pkg}. "
+            f"Install with: pip install 'transcribe-critic[{extra}]'"
+        )
+
+    print(f"  Running {short_name} ({hf_id})...")
+
+    if backend == "parakeet_mlx":
+        _run_parakeet(data.audio_path, hf_id, txt_path, json_path, config.verbose)
+    elif backend == "mlx_audio":
+        _run_mlx_audio(data.audio_path, hf_id, txt_path, json_path, config.verbose)
+
+    # Collapse hallucination loops in the text output
+    if txt_path.exists():
+        text = txt_path.read_text()
+        collapsed, loops = collapse_repetition_loops(text)
+        if loops:
+            txt_path.write_text(collapsed)
+            total_removed = sum(
+                len(l["phrase"].split()) * (l["count"] - 2) for l in loops
+            )
+            print(f"  Collapsed {len(loops)} hallucination loop(s) "
+                  f"({total_removed} words removed)")
+
+    data.whisper_transcripts[short_name] = {
+        "txt": txt_path if txt_path.exists() else None,
+        "json": json_path if json_path.exists() else None,
+    }
+    print(f"  {short_name} transcript saved: {txt_path.name}")
+
+
+def _run_parakeet(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path,
+                  verbose: bool) -> None:
+    """Transcribe using parakeet-mlx."""
+    from parakeet_mlx import from_pretrained
+
+    model = from_pretrained(hf_id)
+    result = model.transcribe(str(audio_path), chunk_duration=120.0)
+
+    # Write plain text
+    txt_path.write_text(result.text)
+
+    # Write Whisper-compatible JSON (segments from sentences, words from tokens)
+    segments = []
+    for sentence in result.sentences:
+        words = [
+            {"word": t.text, "start": t.start, "end": t.end}
+            for t in sentence.tokens
+        ]
+        segments.append({
+            "start": sentence.start,
+            "end": sentence.end,
+            "text": sentence.text,
+            "words": words,
+        })
+    _save_json(json_path, {
+        "text": result.text,
+        "segments": segments,
+        "language": "en",
+    })
+
+
+def _patch_hf_config(hf_id: str) -> None:
+    """Fix int-vs-float type mismatches in HuggingFace model configs.
+
+    Some model configs (e.g., granite-4.0-1b-speech) ship int values for fields
+    that transformers' strict dataclass validation expects as float. This patches
+    the cached config.json in-place.
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+        config_file = hf_hub_download(hf_id, "config.json")
+        with open(config_file) as f:
+            cfg = json.load(f)
+        changed = False
+        for section_key in ["text_config", ""]:
+            section = cfg.get(section_key, cfg) if section_key else cfg
+            if not isinstance(section, dict):
+                continue
+            for key in ["embedding_multiplier", "logits_scaling",
+                        "initializer_range", "rms_norm_eps", "rope_theta"]:
+                if key in section and isinstance(section[key], int):
+                    section[key] = float(section[key])
+                    changed = True
+        if changed:
+            with open(config_file, "w") as f:
+                json.dump(cfg, f, indent=2)
+    except Exception:
+        pass  # Best-effort; if it fails, the original error will surface
+
+
+def _split_audio_chunks(audio_path: Path, chunk_secs: float = 240.0,
+                        overlap_secs: float = 5.0) -> list[tuple[Path, float]]:
+    """Split audio into chunks using ffmpeg, returning (chunk_path, offset_sec) pairs.
+
+    Splits at approximate boundaries; overlap provides context for continuity.
+    Used for models without built-in chunking (e.g., Granite Speech).
+    """
+    import subprocess
+    # Get duration
+    probe = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(audio_path)],
+        capture_output=True, text=True
+    )
+    duration = float(probe.stdout.strip())
+
+    if duration <= chunk_secs:
+        return [(audio_path, 0.0)]
+
+    chunks = []
+    chunk_dir = audio_path.parent / "_asr_chunks"
+    chunk_dir.mkdir(exist_ok=True)
+    offset = 0.0
+    idx = 0
+    while offset < duration:
+        chunk_path = chunk_dir / f"chunk_{idx:03d}.wav"
+        end = min(offset + chunk_secs, duration)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(audio_path),
+             "-ss", str(offset), "-to", str(end),
+             "-ar", "16000", "-ac", "1", str(chunk_path)],
+            capture_output=True, check=True
+        )
+        chunks.append((chunk_path, offset))
+        offset += chunk_secs - overlap_secs
+        idx += 1
+
+    return chunks
+
+
+def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path,
+                   verbose: bool) -> None:
+    """Transcribe using mlx-audio STT."""
+    import inspect
+    from mlx_audio.stt import load
+
+    _patch_hf_config(hf_id)
+    model = load(hf_id)
+
+    # Models with built-in chunking (e.g., Qwen3-ASR) can handle long audio directly
+    sig = inspect.signature(model.generate)
+    has_chunking = "chunk_duration" in sig.parameters
+
+    if has_chunking:
+        result = model.generate(str(audio_path), verbose=verbose)
+        txt_path.write_text(result.text)
+        segments = result.segments or []
+        _save_json(json_path, {
+            "text": result.text,
+            "segments": segments,
+            "language": getattr(result, "language", None) or "en",
+        })
+        return
+
+    # Models without built-in chunking (e.g., Granite Speech) — chunk manually
+    chunks = _split_audio_chunks(audio_path, chunk_secs=240.0)
+
+    if len(chunks) == 1:
+        result = model.generate(str(chunks[0][0]), verbose=verbose)
+        txt_path.write_text(result.text)
+        _save_json(json_path, {
+            "text": result.text,
+            "segments": result.segments or [],
+            "language": getattr(result, "language", None) or "en",
+        })
+        return
+
+    all_texts = []
+    all_segments = []
+    for chunk_path, offset_sec in chunks:
+        print(f"    Chunk at {offset_sec:.0f}s...", end="\r")
+        result = model.generate(str(chunk_path), verbose=verbose)
+        all_texts.append(result.text.strip())
+        # Add offset to segment timestamps
+        for seg in (result.segments or []):
+            seg_copy = dict(seg)
+            seg_copy["start"] = seg_copy.get("start", 0) + offset_sec
+            seg_copy["end"] = seg_copy.get("end", 0) + offset_sec
+            all_segments.append(seg_copy)
+
+    full_text = " ".join(all_texts)
+    txt_path.write_text(full_text)
+    _save_json(json_path, {
+        "text": full_text,
+        "segments": all_segments,
+        "language": "en",
+    })
+
+    # Clean up chunk files
+    chunk_dir = audio_path.parent / "_asr_chunks"
+    if chunk_dir.exists():
+        import shutil
+        shutil.rmtree(chunk_dir)
+
+
 def _ensemble_whisper_transcripts(config: SpeechConfig, data: SpeechData) -> None:
     """Adjudicate multiple Whisper transcripts using wdiff."""
     models = list(data.whisper_transcripts.keys())
@@ -918,15 +1154,8 @@ def _ensemble_whisper_transcripts(config: SpeechConfig, data: SpeechData) -> Non
         print("  Not enough transcripts to ensemble")
         return
 
-    # Start with the largest model as base (usually most accurate)
-    base_model = None
-    for size in MODEL_SIZES:
-        if size in transcripts:
-            base_model = size
-            break
-
-    if not base_model:
-        base_model = models[0]
+    # Start with the highest-ranked model as base (usually most accurate)
+    base_model = max(transcripts.keys(), key=get_model_quality_rank)
 
     base_text = transcripts[base_model]
     print(f"  Using {base_model} as base transcript")

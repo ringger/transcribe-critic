@@ -6,8 +6,8 @@ Automates transcription of speeches from video URLs.
 
 Pipeline steps:
   download   - Download audio, video, and captions (yt-dlp)
-  transcribe - Transcribe audio (mlx-whisper or openai-whisper)
-  ensemble   - Adjudicate multiple Whisper transcripts (wdiff + LLM)
+  transcribe - Transcribe audio (mlx-whisper, parakeet-mlx, mlx-audio)
+  ensemble   - Adjudicate multiple ASR transcripts (wdiff + LLM)
   diarize    - Speaker diarization (pyannote, optional)
   slides     - Extract and optionally analyze slides (ffmpeg + vision LLM)
   merge      - Merge transcript sources into critical text (wdiff + LLM)
@@ -57,7 +57,7 @@ from transcribe_critic import __version__
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
-    MODEL_SIZES,
+    MODEL_SIZES, ASR_MODEL_REGISTRY, get_model_quality_rank,
     DEFAULT_CLAUDE_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_URL,
     DEFAULT_WHISPER_MODELS,
     AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT, WHISPER_MERGED_TXT,
@@ -112,24 +112,32 @@ def _hydrate_data(config: SpeechConfig, data: SpeechData) -> None:
             "json": json_path if json_path.exists() else None,
         }
 
+    # Non-Whisper ASR model transcripts
+    for txt in sorted(d.glob("asr_*.txt")):
+        short_name = txt.stem.removeprefix("asr_")
+        json_path = d / f"asr_{short_name}.json"
+        data.whisper_transcripts[short_name] = {
+            "txt": txt,
+            "json": json_path if json_path.exists() else None,
+        }
+
     # Whisper merged (primary transcript when ensembling)
     merged = d / WHISPER_MERGED_TXT
     if merged.exists():
         data.transcript_path = merged
     elif data.whisper_transcripts:
-        # Fall back to largest single model
-        from transcribe_critic.shared import MODEL_SIZES
-        for size in MODEL_SIZES:
-            if size in data.whisper_transcripts:
-                data.transcript_path = data.whisper_transcripts[size]["txt"]
-                break
+        # Fall back to highest-ranked single model
+        best = max(data.whisper_transcripts.keys(), key=get_model_quality_rank)
+        data.transcript_path = data.whisper_transcripts[best]["txt"]
 
-    # Transcript JSON (use largest model's JSON for timestamps)
+    # Transcript JSON (use highest-ranked model's JSON for timestamps)
     if data.whisper_transcripts:
-        from transcribe_critic.shared import MODEL_SIZES
-        for size in MODEL_SIZES:
-            if size in data.whisper_transcripts:
-                data.transcript_json_path = data.whisper_transcripts[size].get("json")
+        ranked = sorted(data.whisper_transcripts.keys(),
+                        key=get_model_quality_rank, reverse=True)
+        for model in ranked:
+            jp = data.whisper_transcripts[model].get("json")
+            if jp:
+                data.transcript_json_path = jp
                 break
 
     # Load transcript segments from JSON (needed by diarize step)
@@ -608,13 +616,18 @@ Examples:
     output_group.add_argument("-o", "--output-dir",
                         help="Output directory (default: ./transcripts/<title>)")
 
-    # Whisper
-    whisper_group = parser.add_argument_group("whisper")
+    # Transcription
+    whisper_group = parser.add_argument_group("transcription")
     _default_whisper = ",".join(DEFAULT_WHISPER_MODELS)
     whisper_group.add_argument("--whisper-models", default=_default_whisper,
                         help=f"Whisper model(s) to use, comma-separated (default: {_default_whisper}). "
                              f"Options: {', '.join(MODEL_SIZES)}. "
                              "Multiple models enables ensembling for better accuracy")
+    _asr_options = ", ".join(ASR_MODEL_REGISTRY.keys())
+    whisper_group.add_argument("--asr-models", default="",
+                        help=f"Non-Whisper ASR model(s), comma-separated. "
+                             f"Options: {_asr_options}. "
+                             "Requires: pip install 'transcribe-critic[asr]'")
 
     # Slides
     slides_group = parser.add_argument_group("slides")
@@ -718,6 +731,10 @@ Examples:
     print(f"  yt-dlp: OK")
     print(f"  ffmpeg: OK")
     print(f"  whisper: OK ({whisper_impl})")
+    if deps["parakeet_mlx"]:
+        print(f"  parakeet-mlx: OK")
+    if deps["mlx_audio"]:
+        print(f"  mlx-audio: OK")
 
     # Fetch metadata early to resolve output directory from title
     media_info = None
@@ -738,11 +755,19 @@ Examples:
         output_dir.mkdir(parents=True, exist_ok=True)
 
     # Parse whisper models (comma-separated)
-    whisper_models = [m.strip() for m in args.whisper_models.split(",")]
+    whisper_models = [m.strip() for m in args.whisper_models.split(",") if m.strip()]
     for m in whisper_models:
         if m not in MODEL_SIZES:
             print(f"Invalid Whisper model: {m}")
             print(f"Valid options: {', '.join(MODEL_SIZES)}")
+            sys.exit(1)
+
+    # Parse non-Whisper ASR models (comma-separated, optional)
+    asr_models = [m.strip() for m in args.asr_models.split(",") if m.strip()]
+    for m in asr_models:
+        if m not in ASR_MODEL_REGISTRY:
+            print(f"Unknown ASR model: {m}")
+            print(f"Valid options: {', '.join(ASR_MODEL_REGISTRY.keys())}")
             sys.exit(1)
 
     # Determine LLM backend: --api or --api-key switches to cloud API
@@ -766,6 +791,7 @@ Examples:
         url=args.url,
         output_dir=output_dir,
         whisper_models=whisper_models,
+        asr_models=asr_models,
         scene_threshold=args.scene_threshold,
         title=args.title,
         no_slides=no_slides,

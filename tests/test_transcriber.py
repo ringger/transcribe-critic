@@ -654,6 +654,33 @@ class TestHydrateData:
         assert data.transcript_path is None
         assert data.whisper_transcripts == {}
 
+    def test_finds_asr_transcripts(self, tmp_path):
+        (tmp_path / "asr_granite-speech.txt").write_text("granite text")
+        (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        data = SpeechData()
+        _hydrate_data(config, data)
+        assert "granite-speech" in data.whisper_transcripts
+        assert "parakeet" in data.whisper_transcripts
+        assert data.whisper_transcripts["granite-speech"]["txt"] == tmp_path / "asr_granite-speech.txt"
+
+    def test_asr_json_discovered(self, tmp_path):
+        (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
+        (tmp_path / "asr_parakeet.json").write_text("{}")
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        data = SpeechData()
+        _hydrate_data(config, data)
+        assert data.whisper_transcripts["parakeet"]["json"] == tmp_path / "asr_parakeet.json"
+
+    def test_mixed_whisper_and_asr_fallback_picks_highest_rank(self, tmp_path):
+        (tmp_path / "whisper_small.txt").write_text("small text")
+        (tmp_path / "asr_granite-speech.txt").write_text("granite text")
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        data = SpeechData()
+        _hydrate_data(config, data)
+        # granite-speech has quality_rank=9, small has 3 — granite wins
+        assert data.transcript_path == tmp_path / "asr_granite-speech.txt"
+
 
 # ---------------------------------------------------------------------------
 # merge_transcript_sources — edge cases

@@ -6,16 +6,16 @@ Three files from Rev16 evaluated against reference transcripts using meeteval WE
 
 ## Current Best Results
 
-| File | small | medium | distil-large-v3 | 2-way merged (s+m) | 3-way merged |
-|------|-------|--------|-----------------|-------------------|--------------|
-| 3 | 31.5% | 29.5% | 29.6% | **28.5%** | 29.4% |
-| 4 | 31.3% | 29.2% | 27.6% | 28.2% | 28.5% |
-| 9 | 24.1% | 24.5% | 21.6% | 23.1% | 21.7% |
-| **Avg** | **28.9%** | **27.7%** | **26.3%** | **26.6%** | **26.5%** |
+| File | parakeet | 3-way cross-arch | qwen3-asr | distil-large-v3 | 3-way Whisper |
+|------|----------|------------------|-----------|-----------------|---------------|
+| 3 | **27.3%** | 27.5% | 28.0% | 29.6% | 29.4% |
+| 4 | 26.5% | **26.3%** | 26.9% | 27.6% | 28.5% |
+| 9 | **20.4%** | 20.6% | 21.1% | 21.6% | 21.7% |
+| **Avg** | **24.7%** | **24.8%** | **25.3%** | **26.3%** | **26.5%** |
 
-Best single model: distil-large-v3 (26.3%). Best ensemble: 2-way small+medium (26.6%). 3-way ensemble (26.5%) doesn't improve over distil-large-v3 alone — weaker models dilute its advantage on files where it's clearly better.
+Best single model: parakeet (24.7%). Best ensemble: 3-way cross-architecture parakeet+qwen3-asr+distil-large-v3 (24.8%, local qwen2.5:14b adjudicator). The cross-arch ensemble essentially matches parakeet solo, with the ensemble winning on file 4.
 
-All results use anti-hallucination flags and Sonnet adjudicator.
+All results use anti-hallucination flags. Cross-arch ensemble uses local adjudicator (qwen2.5:14b).
 
 ## Experiment History
 
@@ -88,7 +88,10 @@ The 3-way ensemble doesn't improve over distil-large-v3 alone. On file 4, mergin
 2. **Model quality matters most.** Same architecture, same prompt — Sonnet succeeds where local models fail.
 3. **Ensembling helps when models are comparable.** 2-way small+medium ensemble beats medium by 1.1pp. But ensembling a strong model with weaker ones can hurt.
 4. **Anti-hallucination flags are essential.** They prevent catastrophic failures and improve ensemble signal.
-5. **distil-large-v3 is the best single model.** Faster than large, no hallucination, better WER than medium.
+5. **Parakeet is the best single model.** 24.7% avg WER — faster than Whisper, better accuracy, word-level timestamps.
+6. **Always do error analysis.** The cross-arch ensemble initially scored 32.3% — worse than any individual model. Rather than concluding the approach doesn't work, error analysis revealed a base selection bug. After the fix: 24.8%.
+7. **Leaderboard WER doesn't transfer to all domains.** Granite scored 5.52% on clean benchmarks but 105% on podcasts. Parakeet (6.05% leaderboard) beat Granite by 80pp on real data.
+8. **Base model selection is critical.** The best model must be the base for wdiff merging. Corrections flow inward from weaker models — starting from a weaker base amplifies errors.
 
 ### 14. Non-Whisper ASR Backends (2026-03-30)
 
@@ -120,10 +123,40 @@ The [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leade
 
 **Key findings:**
 - **Parakeet is the new best single model at 24.7% avg WER** — 1.6pp better than distil-large-v3 (26.3%) and better than the 3-way Whisper ensemble (26.5%). Wins on all 3 files. Also the fastest: ~1 min for 2h audio.
+- **Qwen3-ASR at 25.3%** — required two bug fixes (WAV conversion for long MP3s, max_tokens=32768, chunk_duration=300s) before producing usable output.
+- **3-way cross-arch ensemble (parakeet + qwen3-asr + distil-large-v3) at 24.8%** — essentially matches parakeet solo. See experiment 15 below for the error analysis that found the base selection bug.
 - **Granite-speech is unusable on podcast audio.** Despite 5.52% WER on clean benchmarks, it produced 801/775/311 hallucination loops per file (57K/48K/18K words removed by collapse). Even after collapse, WER is 93-112%. The model has no built-in anti-hallucination controls, and the chunking overlap may compound the problem.
-- **Qwen3-ASR produced empty output** on all 3 files. It processed only the first ~3 seconds of each MP3 file. Likely an audio loading issue with long MP3 files in mlx-audio — needs investigation.
 
 **Leaderboard WER vs podcast WER:** The Open ASR Leaderboard benchmarks use clean, segmented audio (LibriSpeech, Earnings-22, etc.). Podcast audio is harder: informal speech, overlapping speakers, background music, varied recording quality. Granite's 5.52% leaderboard WER vs 105% podcast WER shows that benchmark performance does not transfer to all domains.
+
+### 15. Cross-Architecture Ensemble Error Analysis (2026-03-31)
+
+Initial 3-way ensemble (parakeet + qwen3-asr + distil-large-v3) scored **32.3% avg WER** with local adjudicator — worse than any individual model. Error analysis identified the cause:
+
+**Symptom:** Garbled name lists, doubled words, misplaced phrases in merged output.
+
+**Investigation:**
+1. Checked normalization — already working; wdiff produced only 2 real diffs in first 300 normalized words between parakeet and qwen3
+2. Compared parakeet (best, 20.4%) to merged output (25.4%) for file9: 778 substitutions, 873 insertions
+3. Categorized diffs: 383 punctuation-only, 386 real word changes — the adjudicator was accepting too many changes
+4. Noticed merge used qwen3-asr as base (quality_rank=8) rather than parakeet (rank=7 at the time)
+5. **Found the bug:** `_resolve_whisper_diffs` re-selected base model using old `MODEL_SIZES` list (Whisper-only), ignoring the quality-ranked selection made by `_ensemble_whisper_transcripts`. The two code paths disagreed.
+
+**Fix:** Made `_resolve_whisper_diffs` use `get_model_quality_rank()` consistently. Updated quality ranks to reflect Rev16 results (parakeet=9, qwen3=8) rather than leaderboard scores.
+
+**Results after fix:**
+
+| Variant | File 3 | File 4 | File 9 | Avg WER |
+|---------|--------|--------|--------|---------|
+| asr_parakeet (solo) | 27.3% | 26.5% | **20.4%** | **24.7%** |
+| 3-way merged (local, fixed) | 27.5% | **26.3%** | 20.6% | **24.8%** |
+| asr_qwen3-asr (solo) | 28.0% | 26.9% | 21.1% | 25.3% |
+| whisper_distil-large-v3 (solo) | 29.6% | 27.6% | 21.6% | 26.3% |
+| 3-way merged (local, before fix) | 35.7% | 35.7% | 25.4% | 32.3% |
+
+The bug fix improved the ensemble from **32.3% to 24.8%** (7.5pp). The ensemble now matches parakeet solo, with the ensemble winning on file 4 (26.3% vs 26.5%).
+
+**Lesson:** Always do error analysis before concluding an approach doesn't work. The initial 32.3% result appeared to show that cross-architecture ensembling degrades quality. The real cause was a pre-existing base selection bug exposed by the new models — the wdiff merging approach was working correctly once the right model was used as base.
 
 ## Next Steps
 

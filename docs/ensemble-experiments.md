@@ -111,7 +111,19 @@ The [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leade
 
 **Rev16 results (files 3, 4, 9):**
 
-_Results pending — eval run in progress._
+| File | distil-large-v3 | parakeet | qwen3-asr | granite-speech | whisper_merged (3-way) |
+|------|----------------|----------|-----------|----------------|----------------------|
+| 3 | 29.6% | **27.3%** | empty | 93.1% | 29.4% |
+| 4 | 27.6% | **26.5%** | empty | 110.2% | 28.5% |
+| 9 | 21.6% | **20.4%** | empty | 112.1% | 21.7% |
+| **Avg** | **26.3%** | **24.7%** | — | 105.2% | 26.5% |
+
+**Key findings:**
+- **Parakeet is the new best single model at 24.7% avg WER** — 1.6pp better than distil-large-v3 (26.3%) and better than the 3-way Whisper ensemble (26.5%). Wins on all 3 files. Also the fastest: ~1 min for 2h audio.
+- **Granite-speech is unusable on podcast audio.** Despite 5.52% WER on clean benchmarks, it produced 801/775/311 hallucination loops per file (57K/48K/18K words removed by collapse). Even after collapse, WER is 93-112%. The model has no built-in anti-hallucination controls, and the chunking overlap may compound the problem.
+- **Qwen3-ASR produced empty output** on all 3 files. It processed only the first ~3 seconds of each MP3 file. Likely an audio loading issue with long MP3 files in mlx-audio — needs investigation.
+
+**Leaderboard WER vs podcast WER:** The Open ASR Leaderboard benchmarks use clean, segmented audio (LibriSpeech, Earnings-22, etc.). Podcast audio is harder: informal speech, overlapping speakers, background music, varied recording quality. Granite's 5.52% leaderboard WER vs 105% podcast WER shows that benchmark performance does not transfer to all domains.
 
 ## Next Steps
 

@@ -1049,6 +1049,28 @@ def _split_audio_chunks(audio_path: Path, chunk_secs: float = 240.0,
     return chunks
 
 
+def _ensure_wav(audio_path: Path) -> tuple[Path, bool]:
+    """Ensure audio is in WAV format for mlx-audio models.
+
+    mlx-audio's audio loader silently truncates long MP3 files. Converting
+    to 16kHz mono WAV avoids this issue.
+
+    Returns (wav_path, needs_cleanup) — cleanup is True if a temp file was created.
+    """
+    if audio_path.suffix.lower() == ".wav":
+        return audio_path, False
+    wav_path = audio_path.parent / f"{audio_path.stem}_asr.wav"
+    if wav_path.exists():
+        return wav_path, False
+    import subprocess
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(audio_path),
+         "-ar", "16000", "-ac", "1", str(wav_path)],
+        capture_output=True, check=True,
+    )
+    return wav_path, True
+
+
 def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path,
                    verbose: bool) -> None:
     """Transcribe using mlx-audio STT."""
@@ -1058,60 +1080,70 @@ def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path
     _patch_hf_config(hf_id)
     model = load(hf_id)
 
+    # Convert to WAV — mlx-audio truncates long MP3 files
+    wav_path, wav_cleanup = _ensure_wav(audio_path)
+
     # Models with built-in chunking (e.g., Qwen3-ASR) can handle long audio directly
     sig = inspect.signature(model.generate)
     has_chunking = "chunk_duration" in sig.parameters
 
-    if has_chunking:
-        result = model.generate(str(audio_path), verbose=verbose)
-        txt_path.write_text(result.text)
-        segments = result.segments or []
+    try:
+        if has_chunking:
+            # Conservative chunk size (default 1200s silently truncates long files)
+            # and generous max_tokens (default 8192 cuts off before chunk completes)
+            result = model.generate(str(wav_path), verbose=verbose,
+                                    chunk_duration=300.0, max_tokens=32768)
+            txt_path.write_text(result.text)
+            segments = result.segments or []
+            _save_json(json_path, {
+                "text": result.text,
+                "segments": segments,
+                "language": getattr(result, "language", None) or "en",
+            })
+            return
+
+        # Models without built-in chunking (e.g., Granite Speech) — chunk manually
+        chunks = _split_audio_chunks(wav_path, chunk_secs=240.0)
+
+        if len(chunks) == 1:
+            result = model.generate(str(chunks[0][0]), verbose=verbose)
+            txt_path.write_text(result.text)
+            _save_json(json_path, {
+                "text": result.text,
+                "segments": result.segments or [],
+                "language": getattr(result, "language", None) or "en",
+            })
+            return
+
+        all_texts = []
+        all_segments = []
+        for chunk_path, offset_sec in chunks:
+            print(f"    Chunk at {offset_sec:.0f}s...", end="\r")
+            result = model.generate(str(chunk_path), verbose=verbose)
+            all_texts.append(result.text.strip())
+            # Add offset to segment timestamps
+            for seg in (result.segments or []):
+                seg_copy = dict(seg)
+                seg_copy["start"] = seg_copy.get("start", 0) + offset_sec
+                seg_copy["end"] = seg_copy.get("end", 0) + offset_sec
+                all_segments.append(seg_copy)
+
+        full_text = " ".join(all_texts)
+        txt_path.write_text(full_text)
         _save_json(json_path, {
-            "text": result.text,
-            "segments": segments,
-            "language": getattr(result, "language", None) or "en",
+            "text": full_text,
+            "segments": all_segments,
+            "language": "en",
         })
-        return
 
-    # Models without built-in chunking (e.g., Granite Speech) — chunk manually
-    chunks = _split_audio_chunks(audio_path, chunk_secs=240.0)
-
-    if len(chunks) == 1:
-        result = model.generate(str(chunks[0][0]), verbose=verbose)
-        txt_path.write_text(result.text)
-        _save_json(json_path, {
-            "text": result.text,
-            "segments": result.segments or [],
-            "language": getattr(result, "language", None) or "en",
-        })
-        return
-
-    all_texts = []
-    all_segments = []
-    for chunk_path, offset_sec in chunks:
-        print(f"    Chunk at {offset_sec:.0f}s...", end="\r")
-        result = model.generate(str(chunk_path), verbose=verbose)
-        all_texts.append(result.text.strip())
-        # Add offset to segment timestamps
-        for seg in (result.segments or []):
-            seg_copy = dict(seg)
-            seg_copy["start"] = seg_copy.get("start", 0) + offset_sec
-            seg_copy["end"] = seg_copy.get("end", 0) + offset_sec
-            all_segments.append(seg_copy)
-
-    full_text = " ".join(all_texts)
-    txt_path.write_text(full_text)
-    _save_json(json_path, {
-        "text": full_text,
-        "segments": all_segments,
-        "language": "en",
-    })
-
-    # Clean up chunk files
-    chunk_dir = audio_path.parent / "_asr_chunks"
-    if chunk_dir.exists():
-        import shutil
-        shutil.rmtree(chunk_dir)
+        # Clean up chunk files
+        chunk_dir = wav_path.parent / "_asr_chunks"
+        if chunk_dir.exists():
+            import shutil
+            shutil.rmtree(chunk_dir)
+    finally:
+        if wav_cleanup and wav_path.exists():
+            wav_path.unlink()
 
 
 def _ensemble_whisper_transcripts(config: SpeechConfig, data: SpeechData) -> None:

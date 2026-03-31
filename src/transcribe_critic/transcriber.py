@@ -59,7 +59,7 @@ from transcribe_critic.shared import (
     SpeechConfig, SpeechData, is_up_to_date,
     MODEL_SIZES, ASR_MODEL_REGISTRY, get_model_quality_rank,
     DEFAULT_CLAUDE_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_URL,
-    DEFAULT_WHISPER_MODELS,
+    DEFAULT_WHISPER_MODELS, DEFAULT_ASR_MODELS,
     AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT, WHISPER_MERGED_TXT,
     DIARIZATION_JSON, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
     ANALYSIS_MD, SLIDE_TIMESTAMPS_JSON,
@@ -623,9 +623,10 @@ Examples:
                         help=f"Whisper model(s) to use, comma-separated (default: {_default_whisper}). "
                              f"Options: {', '.join(MODEL_SIZES)}. "
                              "Multiple models enables ensembling for better accuracy")
+    _default_asr = ",".join(DEFAULT_ASR_MODELS)
     _asr_options = ", ".join(ASR_MODEL_REGISTRY.keys())
-    whisper_group.add_argument("--asr-models", default="",
-                        help=f"Non-Whisper ASR model(s), comma-separated. "
+    whisper_group.add_argument("--asr-models", default=_default_asr,
+                        help=f"Non-Whisper ASR model(s), comma-separated (default: {_default_asr}). "
                              f"Options: {_asr_options}. "
                              "Requires: pip install 'transcribe-critic[asr]'")
 

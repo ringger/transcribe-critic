@@ -80,7 +80,8 @@ DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_LOCAL_MODEL = "qwen2.5:14b"
 DEFAULT_LOCAL_VISION_MODEL = "llava"
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/"
-DEFAULT_WHISPER_MODELS = ["small", "medium", "distil-large-v3"]
+DEFAULT_WHISPER_MODELS = ["distil-large-v3"]
+DEFAULT_ASR_MODELS = ["parakeet", "qwen3-asr"]
 
 # Common/stop words for filtering trivial diffs in ensembling and merging
 COMMON_WORDS = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
@@ -98,7 +99,7 @@ class SpeechConfig:
     url: str
     output_dir: Path
     whisper_models: list = field(default_factory=lambda: list(DEFAULT_WHISPER_MODELS))  # Can be multiple models
-    asr_models: list = field(default_factory=list)  # Non-Whisper ASR models (see ASR_MODEL_REGISTRY)
+    asr_models: list = field(default_factory=lambda: list(DEFAULT_ASR_MODELS))  # Non-Whisper ASR models
     scene_threshold: float = 0.1
     analyze_slides: bool = False
     merge_sources: bool = True  # Merge YouTube captions with Whisper (default: on)

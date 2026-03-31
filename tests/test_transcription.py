@@ -717,7 +717,7 @@ class TestTranscribeAudio:
     @patch("transcribe_critic.transcription.check_dependencies",
            return_value={"mlx_whisper": False, "whisper": False})
     def test_raises_without_whisper(self, mock_deps, tmp_path):
-        config = SpeechConfig(url="x", output_dir=tmp_path)
+        config = SpeechConfig(url="x", output_dir=tmp_path, asr_models=[])
         audio = tmp_path / "audio.mp3"
         audio.write_text("fake")
         data = SpeechData(audio_path=audio)
@@ -729,7 +729,7 @@ class TestTranscribeAudio:
     @patch("transcribe_critic.transcription.check_dependencies",
            return_value={"mlx_whisper": True, "whisper": False})
     def test_single_model_uses_directly(self, mock_deps, mock_run, mock_load, tmp_path):
-        config = SpeechConfig(url="x", output_dir=tmp_path, whisper_models=["medium"])
+        config = SpeechConfig(url="x", output_dir=tmp_path, whisper_models=["medium"], asr_models=[])
         audio = tmp_path / "audio.mp3"
         audio.write_text("fake")
         txt = tmp_path / "whisper_medium.txt"
@@ -749,7 +749,7 @@ class TestTranscribeAudio:
            return_value={"mlx_whisper": True, "whisper": False})
     def test_multiple_models_does_not_call_ensemble(self, mock_deps, mock_run, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path,
-                              whisper_models=["small", "medium"])
+                              whisper_models=["small", "medium"], asr_models=[])
         audio = tmp_path / "audio.mp3"
         audio.write_text("fake")
         data = SpeechData(audio_path=audio)
@@ -771,7 +771,7 @@ class TestTranscribeAudio:
            return_value={"mlx_whisper": True, "whisper": False})
     def test_raises_if_no_transcript_after_run(self, mock_deps, mock_run,
                                                 mock_load, tmp_path):
-        config = SpeechConfig(url="x", output_dir=tmp_path, whisper_models=["medium"])
+        config = SpeechConfig(url="x", output_dir=tmp_path, whisper_models=["medium"], asr_models=[])
         audio = tmp_path / "audio.mp3"
         audio.write_text("fake")
         data = SpeechData(audio_path=audio)

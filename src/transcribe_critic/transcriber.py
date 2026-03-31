@@ -297,7 +297,7 @@ def estimate_api_cost(config: SpeechConfig, num_slides: int = 45, transcript_wor
         ensemble_cost = input_cost + output_cost
         costs["ensemble_whisper"] = ensemble_cost
         costs["details"].append(
-            f"Whisper ensemble: {num_models} models × {num_chunks} clusters = ${ensemble_cost:.2f}")
+            f"ASR ensemble: {num_models} models × {num_chunks} clusters = ${ensemble_cost:.2f}")
 
     costs["total"] = costs["analyze_slides"] + costs["merge_sources"] + costs["ensemble_whisper"]
 
@@ -988,16 +988,17 @@ Examples:
         if len(data.whisper_transcripts) > 1:
             for model, paths in data.whisper_transcripts.items():
                 if paths.get("txt") and paths["txt"].exists():
-                    print(f"  - {paths['txt'].name} (Whisper {model})")
+                    kind = "Whisper" if paths["txt"].name.startswith("whisper_") else "ASR"
+                    print(f"  - {paths['txt'].name} ({kind}: {model})")
         if data.transcript_path and data.transcript_path.exists():
-            label = "whisper-merged transcript" if len(data.whisper_transcripts) > 1 else "transcript"
+            label = "ensemble-merged transcript" if len(data.whisper_transcripts) > 1 else "transcript"
             print(f"  - {data.transcript_path.name} ({label})")
         if data.transcript_json_path and data.transcript_json_path.exists():
             print(f"  - {data.transcript_json_path.name} (transcript with timestamps)")
         if data.diarization_path and data.diarization_path.exists():
             print(f"  - {data.diarization_path.name} (diarized transcript)")
         if data.merged_transcript_path and data.merged_transcript_path.exists():
-            print(f"  - {data.merged_transcript_path.name} (merged from YouTube + Whisper)")
+            print(f"  - {data.merged_transcript_path.name} (merged from all sources)")
         if data.slides_dir and data.slides_dir.exists():
             print(f"  - slides/ ({len(data.slide_images)} images)")
         timestamps_file = config.output_dir / SLIDE_TIMESTAMPS_JSON

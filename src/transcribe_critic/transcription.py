@@ -532,7 +532,7 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
 
     if all_loops:
         total = sum(len(v) for v in all_loops.values())
-        print(f"  Collapsed {total} Whisper hallucination loop(s)")
+        print(f"  Collapsed {total} hallucination loop(s) during ensemble")
 
     # Step 1: Find positioned diffs between base and each other model
     base_words = base_text.split()
@@ -1165,7 +1165,7 @@ def _ensemble_whisper_transcripts(config: SpeechConfig, data: SpeechData) -> Non
                 data.transcript_path = merged_path
                 data.transcript_json_path = _select_largest_model_json(data)
             return
-    print(f"  Adjudicating {len(models)} Whisper transcripts: {', '.join(models)}")
+    print(f"  Adjudicating {len(models)} transcripts: {', '.join(models)}")
     if len(models) < 2:
         return
 
@@ -1198,7 +1198,7 @@ def _ensemble_whisper_transcripts(config: SpeechConfig, data: SpeechData) -> Non
         f.write(merged_text)
 
     data.transcript_path = merged_path
-    print(f"  Whisper-merged transcript saved: {merged_path.name}")
+    print(f"  Ensemble-merged transcript saved: {merged_path.name}")
 
     data.transcript_json_path = _select_largest_model_json(data)
     _load_transcript_segments(data)

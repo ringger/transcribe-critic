@@ -47,21 +47,22 @@ WHISPER_QUALITY_RANK = {
 }
 
 # Non-Whisper ASR model registry: short name -> config
+# Quality ranks reflect Rev16 podcast eval, not leaderboard (which uses clean benchmarks).
 ASR_MODEL_REGISTRY = {
     "granite-speech": {
         "hf_id": "mlx-community/granite-4.0-1b-speech-8bit",
         "backend": "mlx_audio",
-        "quality_rank": 9,   # 5.52% avg WER on Open ASR Leaderboard
+        "quality_rank": 1,   # 105% WER on Rev16 — unusable on podcasts
     },
     "qwen3-asr": {
         "hf_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
         "backend": "mlx_audio",
-        "quality_rank": 8,   # 5.76%
+        "quality_rank": 8,   # 25.3% avg WER on Rev16
     },
     "parakeet": {
         "hf_id": "mlx-community/parakeet-tdt-0.6b-v2",
         "backend": "parakeet_mlx",
-        "quality_rank": 7,   # 6.05%
+        "quality_rank": 9,   # 24.7% avg WER on Rev16 — best single model
     },
 }
 

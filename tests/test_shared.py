@@ -979,23 +979,16 @@ class TestGetModelQualityRank:
         assert get_model_quality_rank("tiny") == 1
 
     def test_asr_models(self):
-        assert get_model_quality_rank("granite-speech") == 9
+        assert get_model_quality_rank("parakeet") == 9
         assert get_model_quality_rank("qwen3-asr") == 8
-        assert get_model_quality_rank("parakeet") == 7
+        assert get_model_quality_rank("granite-speech") == 1
 
     def test_unknown_model_returns_zero(self):
         assert get_model_quality_rank("nonexistent") == 0
 
-    def test_asr_models_rank_above_whisper(self):
-        best_whisper = max(WHISPER_QUALITY_RANK.values())
-        for name, entry in ASR_MODEL_REGISTRY.items():
-            assert entry["quality_rank"] > best_whisper, (
-                f"{name} should rank above best Whisper model"
-            )
-
-    def test_ranking_order_matches_leaderboard(self):
-        assert get_model_quality_rank("granite-speech") > get_model_quality_rank("qwen3-asr")
-        assert get_model_quality_rank("qwen3-asr") > get_model_quality_rank("parakeet")
+    def test_ranking_order_matches_rev16_eval(self):
+        assert get_model_quality_rank("parakeet") > get_model_quality_rank("qwen3-asr")
+        assert get_model_quality_rank("qwen3-asr") > get_model_quality_rank("distil-large-v3")
 
 
 class TestCheckDependencies:

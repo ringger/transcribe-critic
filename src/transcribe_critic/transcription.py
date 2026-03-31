@@ -536,13 +536,7 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
 
     # Step 1: Find positioned diffs between base and each other model
     base_words = base_text.split()
-    base_model = None
-    for size in MODEL_SIZES:
-        if size in all_transcripts:
-            base_model = size
-            break
-    if not base_model:
-        base_model = list(all_transcripts.keys())[0]
+    base_model = max(all_transcripts.keys(), key=get_model_quality_rank)
 
     other_models = [m for m in all_transcripts if m != base_model]
 

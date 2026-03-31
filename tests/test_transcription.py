@@ -15,6 +15,7 @@ from transcribe_critic.transcription import (
     _clean_llm_output,
     _clean_resolution,
     _cluster_diffs,
+    _ensure_wav,
     _ensemble_whisper_transcripts,
     _filter_trivial_diffs,
     _format_reading,
@@ -1146,16 +1147,16 @@ class TestSelectLargestModelJsonRanked:
         data = SpeechData()
         data.whisper_transcripts = {
             "small": {"txt": tmp_path / "whisper_small.txt", "json": tmp_path / "whisper_small.json"},
-            "granite-speech": {"txt": tmp_path / "asr_granite-speech.txt", "json": tmp_path / "asr_granite-speech.json"},
+            "parakeet": {"txt": tmp_path / "asr_parakeet.txt", "json": tmp_path / "asr_parakeet.json"},
         }
         result = _select_largest_model_json(data)
-        assert result == tmp_path / "asr_granite-speech.json"
+        assert result == tmp_path / "asr_parakeet.json"
 
     def test_falls_back_when_best_has_no_json(self, tmp_path):
         data = SpeechData()
         data.whisper_transcripts = {
             "small": {"txt": tmp_path / "whisper_small.txt", "json": tmp_path / "whisper_small.json"},
-            "granite-speech": {"txt": tmp_path / "asr_granite-speech.txt", "json": None},
+            "parakeet": {"txt": tmp_path / "asr_parakeet.txt", "json": None},
         }
         result = _select_largest_model_json(data)
         assert result == tmp_path / "whisper_small.json"
@@ -1256,5 +1257,161 @@ class TestSplitAudioChunks:
         # Stride should be chunk_secs - overlap_secs = 3.0
         for i in range(1, len(offsets)):
             assert offsets[i] - offsets[i-1] == pytest.approx(3.0, abs=0.1)
+
+
+# ---------------------------------------------------------------------------
+# Normalization eliminates punctuation-only diffs
+# ---------------------------------------------------------------------------
+
+class TestNormalizationEliminatesPunctuationDiffs:
+    """Verify that _parse_wdiff_diffs produces no diffs when texts differ
+    only in punctuation, capitalization, or whitespace — since normalization
+    is applied before wdiff alignment."""
+
+    def test_case_only_difference(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        diffs = _parse_wdiff_diffs("Hello World", "hello world", config)
+        assert diffs == []
+
+    def test_punctuation_only_difference(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        diffs = _parse_wdiff_diffs("Hello, world.", "Hello world", config)
+        assert diffs == []
+
+    def test_mixed_case_and_punctuation(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        text_a = "So, really, hearing about it after the baby dropped"
+        text_b = "So really hearing about it after the baby dropped"
+        diffs = _parse_wdiff_diffs(text_a, text_b, config)
+        assert diffs == []
+
+    def test_real_word_diff_still_detected(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        text_a = "Podcast and Color the Podcast"
+        text_b = "Podcasts in Color, the podcast"
+        diffs = _parse_wdiff_diffs(text_a, text_b, config)
+        # "and" vs "in" is a real diff; "Podcast" vs "Podcasts" is a real diff
+        subs = [d for d in diffs if d["type"] == "substitution"]
+        assert len(subs) >= 1
+
+    def test_extra_word_detected_despite_punctuation(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        text_a = "she was still pregnant and had her baby shower"
+        text_b = "she was still pregnant, so and had her baby shower"
+        diffs = _parse_wdiff_diffs(text_a, text_b, config)
+        # "so" is an insertion — should be detected
+        assert len(diffs) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Ensemble base selection uses quality ranking
+# ---------------------------------------------------------------------------
+
+class TestEnsembleBaseSelection:
+    """Test that ensemble correctly selects base model by quality rank."""
+
+    def test_selects_parakeet_over_whisper(self, tmp_path, capsys):
+        config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
+                              skip_existing=False)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.mp3"
+        data.audio_path.write_text("fake")
+        # Create transcripts for parakeet and distil-large-v3
+        for name, prefix in [("parakeet", "asr"), ("distil-large-v3", "whisper")]:
+            txt = tmp_path / f"{prefix}_{name}.txt"
+            txt.write_text(f"transcript from {name}")
+            json_path = tmp_path / f"{prefix}_{name}.json"
+            json_path.write_text('{"segments": []}')
+            data.whisper_transcripts[name] = {"txt": txt, "json": json_path}
+        time.sleep(0.05)  # ensure merged is newer
+
+        _ensemble_whisper_transcripts(config, data)
+        out = capsys.readouterr().out
+        assert "Using parakeet as base" in out
+
+    def test_selects_qwen3_over_distil(self, tmp_path, capsys):
+        config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
+                              skip_existing=False)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.mp3"
+        data.audio_path.write_text("fake")
+        for name, prefix in [("qwen3-asr", "asr"), ("distil-large-v3", "whisper")]:
+            txt = tmp_path / f"{prefix}_{name}.txt"
+            txt.write_text(f"transcript from {name}")
+            json_path = tmp_path / f"{prefix}_{name}.json"
+            json_path.write_text('{"segments": []}')
+            data.whisper_transcripts[name] = {"txt": txt, "json": json_path}
+        time.sleep(0.05)
+
+        _ensemble_whisper_transcripts(config, data)
+        out = capsys.readouterr().out
+        assert "Using qwen3-asr as base" in out
+
+
+# ---------------------------------------------------------------------------
+# _apply_resolutions preserves base punctuation in uncontested regions
+# ---------------------------------------------------------------------------
+
+class TestApplyResolutionsPreservesBase:
+    """Verify that _apply_resolutions only changes words at diff positions,
+    leaving the base model's text (including punctuation) intact elsewhere."""
+
+    def test_uncontested_words_unchanged(self):
+        base_words = "Hello, world! The quick, brown fox jumps.".split()
+        diffs = [{"type": "substitution", "a_text": "red", "b_text": "brown",
+                  "a_pos": 3, "b_pos": 3, "a_len": 1, "b_len": 1}]
+        resolutions = {id(diffs[0]): "red"}
+        result = _apply_resolutions(base_words, diffs, resolutions)
+        # "Hello," and "world!" should keep their punctuation
+        assert result.startswith("Hello, world!")
+        assert result.endswith("jumps.")
+
+    def test_no_resolutions_returns_base_exactly(self):
+        base_words = "Hello, world! This is a test.".split()
+        diffs = [{"type": "substitution", "a_text": "an", "b_text": "a",
+                  "a_pos": 4, "b_pos": 4, "a_len": 1, "b_len": 1}]
+        resolutions = {}  # adjudicator chose nothing — keep base
+        result = _apply_resolutions(base_words, diffs, resolutions)
+        assert result == "Hello, world! This is a test."
+
+
+# ---------------------------------------------------------------------------
+# _ensure_wav
+# ---------------------------------------------------------------------------
+
+class TestEnsureWav:
+    def test_wav_input_passes_through(self, tmp_path):
+        wav = tmp_path / "audio.wav"
+        wav.write_bytes(b"fake")
+        result_path, cleanup = _ensure_wav(wav)
+        assert result_path == wav
+        assert cleanup is False
+
+    def test_existing_asr_wav_reused(self, tmp_path):
+        mp3 = tmp_path / "audio.mp3"
+        mp3.write_bytes(b"fake")
+        asr_wav = tmp_path / "audio_asr.wav"
+        asr_wav.write_bytes(b"cached wav")
+        result_path, cleanup = _ensure_wav(mp3)
+        assert result_path == asr_wav
+        assert cleanup is False
+
+    @patch("subprocess.run")
+    def test_mp3_triggers_conversion(self, mock_run, tmp_path):
+        mp3 = tmp_path / "audio.mp3"
+        mp3.write_bytes(b"fake")
+        # Mock ffmpeg creating the wav file
+        def create_wav(*args, **kwargs):
+            (tmp_path / "audio_asr.wav").write_bytes(b"converted")
+            return MagicMock(returncode=0)
+        mock_run.side_effect = create_wav
+
+        result_path, cleanup = _ensure_wav(mp3)
+        assert result_path == tmp_path / "audio_asr.wav"
+        assert cleanup is True
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "ffmpeg" in cmd
+        assert "-ar" in cmd
 
 

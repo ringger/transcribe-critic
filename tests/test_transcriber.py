@@ -674,12 +674,12 @@ class TestHydrateData:
 
     def test_mixed_whisper_and_asr_fallback_picks_highest_rank(self, tmp_path):
         (tmp_path / "whisper_small.txt").write_text("small text")
-        (tmp_path / "asr_granite-speech.txt").write_text("granite text")
+        (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        # granite-speech has quality_rank=9, small has 3 — granite wins
-        assert data.transcript_path == tmp_path / "asr_granite-speech.txt"
+        # parakeet has quality_rank=9, small has 3 — parakeet wins
+        assert data.transcript_path == tmp_path / "asr_parakeet.txt"
 
 
 # ---------------------------------------------------------------------------

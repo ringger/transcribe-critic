@@ -158,6 +158,25 @@ The bug fix improved the ensemble from **32.3% to 24.8%** (7.5pp). The ensemble 
 
 **Lesson:** Always do error analysis before concluding an approach doesn't work. The initial 32.3% result appeared to show that cross-architecture ensembling degrades quality. The real cause was a pre-existing base selection bug exposed by the new models — the wdiff merging approach was working correctly once the right model was used as base.
 
+### 16. Collins Speech — Cross-Architecture Ensemble (2026-03-31)
+
+Ran the 3-way cross-arch ensemble (parakeet + qwen3-asr + distil-large-v3) on the Collins BYU devotional (~38 min, clean studio audio). Local adjudicator (qwen2.5:14b). No reference transcript available for WER scoring.
+
+**Ensemble stats:** 104 diffs in 57 clusters, 104/104 resolved. Only 76 diffs between distil-large-v3 and parakeet, 46 between qwen3-asr and parakeet — consistent with clean audio producing more agreement.
+
+**Source survival analysis:**
+
+```
+Source                    Words   Common  Output Coverage  Retention
+------------------------ ------- ------- --------------- ----------
+Parakeet                   6,056   6,017           99.2%     99.4%
+Qwen3-ASR                  6,063   5,698           93.9%     94.0%
+Distil-large-v3            6,006   5,732           94.5%     95.4%
+Merged output              6,067
+```
+
+With parakeet as base, the merged output is 99.2% parakeet's text with ~50 targeted corrections (~0.8% of words) from the other models. This is the "validates more than it corrects" pattern expected on clean audio.
+
 ## Next Steps
 
 - Score new ASR models and mixed ensembles on Rev16

@@ -133,16 +133,14 @@ transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides --
 # Custom output directory
 transcribe-critic "https://youtube.com/watch?v=..." -o ./my_transcript
 
-# Use specific Whisper models (default: small,medium,distil-large-v3)
-transcribe-critic "https://youtube.com/watch?v=..." --whisper-models medium,distil-large-v3
+# Use specific ASR models (default: distil-large-v3,parakeet,qwen3-asr)
+transcribe-critic "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet
 
-# Use non-Whisper ASR models (requires pip install transcribe-critic[asr])
-transcribe-critic "https://youtube.com/watch?v=..." --whisper-models distil-large-v3 \
-    --asr-models granite-speech,parakeet
+# Use a single model
+transcribe-critic "https://youtube.com/watch?v=..." --models parakeet
 
-# Non-Whisper only (no Whisper models)
-transcribe-critic "https://youtube.com/watch?v=..." --whisper-models "" \
-    --asr-models granite-speech,parakeet,qwen3-asr
+# Migrate legacy whisper_* files in existing output directories
+transcribe-critic-migrate ./transcripts --recursive --dry-run
 
 # Use a different local model
 transcribe-critic "https://youtube.com/watch?v=..." --local-model llama3.3
@@ -225,17 +223,13 @@ output_dir/
 ├── audio.wav                     # Converted for diarization (default; skipped with --no-diarize)
 ├── video.mp4                     # Downloaded video (if slides enabled)
 ├── captions.en.vtt               # YouTube captions (if available)
-├── whisper_small.txt              # Whisper small transcript
-├── whisper_small.json             # Whisper small with timestamps
-├── whisper_medium.txt             # Whisper medium transcript
-├── whisper_medium.json            # Whisper medium with timestamps
-├── whisper_distil-large-v3.txt    # Whisper distil-large-v3 transcript
-├── whisper_distil-large-v3.json   # Whisper distil-large-v3 with timestamps
-├── asr_granite-speech.txt         # (if --asr-models includes granite-speech)
-├── asr_granite-speech.json        # (if --asr-models includes granite-speech)
-├── asr_parakeet.txt               # (if --asr-models includes parakeet)
-├── asr_parakeet.json              # (if --asr-models includes parakeet)
-├── whisper_merged.txt             # Merged from multiple ASR models via adjudication
+├── asr_distil-large-v3.txt        # Whisper distil-large-v3 transcript
+├── asr_distil-large-v3.json       # Whisper distil-large-v3 with timestamps
+├── asr_parakeet.txt               # Parakeet transcript
+├── asr_parakeet.json              # Parakeet with timestamps
+├── asr_qwen3-asr.txt              # Qwen3-ASR transcript
+├── asr_qwen3-asr.json             # Qwen3-ASR with timestamps
+├── asr_merged.txt                 # Merged from multiple ASR models via adjudication
 ├── diarization.json              # Speaker segments (default; skipped with --no-diarize)
 ├── diarization_segmentation.npy  # Cached segmentation (default; skipped with --no-diarize)
 ├── diarization_embeddings.npy    # Cached embeddings (default; skipped with --no-diarize)
@@ -379,7 +373,7 @@ The lesson: stronger LLMs are better adjudicators overall, but they are also mor
 
 ### Multi-Model ASR Merging
 
-When using multiple ASR models (default: `small,medium,distil-large-v3` Whisper models; optionally add `--asr-models granite-speech,parakeet,qwen3-asr`):
+When using multiple ASR models (default: `distil-large-v3,parakeet,qwen3-asr` via `--models`):
 
 1. Runs each model independently (Whisper with anti-hallucination flags; non-Whisper via their native libraries)
 2. Uses `wdiff` to identify specific word-level differences between each non-base model and the base (highest-ranked model by quality)
@@ -388,7 +382,7 @@ When using multiple ASR models (default: `small,medium,distil-large-v3` Whisper 
 5. The LLM picks a letter for each disagreement — constrained to choose between actual transcriptions, preventing hallucinated text
 6. Chosen readings are surgically applied to the base transcript, leaving uncontested regions untouched
 
-This targeted diff resolution avoids the problems of full-text rewriting (chunk-boundary duplication, errors in uncontested regions, wasted tokens). The implementation runs model-vs-model adjudication first to produce a single merged witness (`whisper_merged.txt`), which then enters the multi-source merge alongside captions and external transcripts.
+This targeted diff resolution avoids the problems of full-text rewriting (chunk-boundary duplication, errors in uncontested regions, wasted tokens). The implementation runs model-vs-model adjudication first to produce a single merged witness (`asr_merged.txt`), which then enters the multi-source merge alongside captions and external transcripts.
 
 Mixing architecturally diverse models (e.g., Whisper encoder-decoder + Granite conformer+LLM + Parakeet FastConformer-TDT) provides better ensemble diversity than combining multiple Whisper sizes alone.
 

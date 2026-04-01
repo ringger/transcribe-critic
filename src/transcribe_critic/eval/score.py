@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from transcribe_critic.shared import DIARIZATION_JSON, MODEL_SIZES, WHISPER_MERGED_TXT, TRANSCRIPT_MERGED_TXT
+from transcribe_critic.shared import (
+    DIARIZATION_JSON, ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT, TRANSCRIPT_MERGED_TXT,
+)
 from transcribe_critic.eval.convert import (
     hypothesis_to_stm, plain_text_to_stm, diarization_json_to_rttm,
 )
@@ -120,24 +122,39 @@ def _discover_hypotheses(output_dir: Path) -> list[tuple[str, Path]]:
     """Discover all available transcript variants in an output directory.
 
     Returns list of (name, path) tuples for each scorable transcript.
+    Searches for both new asr_*.txt and legacy whisper_*.txt files.
     """
     hypotheses = []
+    seen_stems = set()
 
-    # Individual Whisper model outputs
-    for model in MODEL_SIZES:
-        txt = output_dir / f"whisper_{model}.txt"
-        if txt.exists():
-            hypotheses.append((f"whisper_{model}", txt))
-
-    # Non-Whisper ASR model outputs
+    # ASR model outputs (new naming: asr_*.txt)
     for txt in sorted(output_dir.glob("asr_*.txt")):
-        name = txt.stem  # e.g. "asr_parakeet"
-        hypotheses.append((name, txt))
+        stem = txt.stem  # e.g. "asr_parakeet" or "asr_distil-large-v3"
+        if stem in (ASR_MERGED_TXT.removesuffix(".txt"),):
+            continue  # handled separately below
+        hypotheses.append((stem, txt))
+        seen_stems.add(stem)
 
-    # Whisper-merged (adjudicated from multiple models)
-    wm = output_dir / WHISPER_MERGED_TXT
-    if wm.exists():
-        hypotheses.append(("whisper_merged", wm))
+    # Legacy Whisper model outputs (whisper_*.txt), skip if already found as asr_*
+    for txt in sorted(output_dir.glob("whisper_*.txt")):
+        stem = txt.stem  # e.g. "whisper_medium"
+        if "merged" in stem:
+            continue  # handled separately below
+        # Check if we already have this model via asr_ prefix
+        model = stem.removeprefix("whisper_")
+        asr_stem = f"asr_{model}"
+        if asr_stem in seen_stems:
+            continue
+        hypotheses.append((stem, txt))
+
+    # Ensemble-merged (check new name first, then legacy)
+    merged = output_dir / ASR_MERGED_TXT
+    if merged.exists():
+        hypotheses.append(("asr_merged", merged))
+    else:
+        legacy = output_dir / LEGACY_WHISPER_MERGED_TXT
+        if legacy.exists():
+            hypotheses.append(("whisper_merged", legacy))
 
     # Source-merged (critical text from all sources)
     tm = output_dir / TRANSCRIPT_MERGED_TXT

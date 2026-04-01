@@ -2,15 +2,15 @@
 
 ## Architecture / Refactoring
 
-- **Remove Whisper-centric naming throughout codebase.** Rename `whisper_transcripts` dict to `asr_transcripts`, `whisper_merged.txt` to `asr_merged.txt`, unify `--whisper-models` and `--asr-models` into `--models`, update `_hydrate_data` globs, ensemble function names, file naming conventions. Needs backward compat migration for existing output dirs.
+- ~~**Remove Whisper-centric naming throughout codebase.**~~ ✅ Done. Unified `ALL_MODELS` registry, `--models` CLI flag (old flags deprecated), `asr_*.txt` file naming with backward-compat read-both, `transcribe-critic-migrate` utility. See commit history.
 
-- **Ensemble should respect requested models, not discover from disk.** `_hydrate_data()` picks up all transcripts on disk regardless of `--asr-models`. The ensemble included unwanted models (granite, small, medium) because their files were present. Need a filter mechanism so ensemble only uses the models the user asked for.
+- **Ensemble should respect requested models, not discover from disk.** `_hydrate_data()` picks up all transcripts on disk regardless of `--models`. The ensemble included unwanted models (granite, small, medium) because their files were present. Need a filter mechanism so ensemble only uses the models the user asked for.
 
 ## Cross-Architecture Ensemble Improvements
 
 The wdiff-based ensemble degrades (31-32% WER) when mixing architecturally diverse models, even though individual models score well (24-26%). Root cause: wdiff alignment breaks on structurally different text (punctuation, capitalization, word boundaries, name list ordering).
 
-- **Normalize before diffing.** Strip punctuation, lowercase, normalize whitespace before wdiff. Eliminates spurious diffs. Present only genuine word disagreements to adjudicator. Apply fixes to best-punctuated source (parakeet). Highest-value, lowest-effort fix. *(In progress)*
+- ~~**Normalize before diffing.**~~ ✅ Done. `_normalize_for_comparison()` in merge.py strips punctuation, lowercases, normalizes whitespace before wdiff alignment.
 
 - **Timestamp-guided alignment.** Align by time window (e.g., 10s segments) using word timestamps from parakeet/whisper instead of LCS. Prevents name-list garbling. More principled but bigger lift.
 

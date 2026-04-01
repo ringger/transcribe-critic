@@ -13,7 +13,8 @@ import re
 from pathlib import Path
 
 from transcribe_critic.shared import (
-    WHISPER_MERGED_TXT, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, DIARIZATION_JSON,
+    ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT, WHISPER_MERGED_TXT,
+    DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, DIARIZATION_JSON,
 )
 
 
@@ -216,10 +217,11 @@ def detect_hypothesis_format(output_dir: Path) -> str:
     """Detect which hypothesis format is available in a pipeline output directory.
 
     Returns one of: 'diarized', 'structured_merged', 'plain_merged', 'whisper'
+    (Note: 'whisper' is kept as the format name for backward compat even though
+    it now covers all ASR backends.)
     """
     diarized = output_dir / DIARIZED_TXT
     merged = output_dir / TRANSCRIPT_MERGED_TXT
-    whisper_merged = output_dir / WHISPER_MERGED_TXT
 
     if diarized.exists():
         return "diarized"
@@ -230,11 +232,14 @@ def detect_hypothesis_format(output_dir: Path) -> str:
             return "structured_merged"
         return "plain_merged"
 
-    if whisper_merged.exists():
+    # Check for ensemble-merged (new or legacy name)
+    if (output_dir / ASR_MERGED_TXT).exists():
+        return "whisper"
+    if (output_dir / LEGACY_WHISPER_MERGED_TXT).exists():
         return "whisper"
 
-    # Fall back to any Whisper model output
-    skip = {DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, WHISPER_MERGED_TXT}
+    # Fall back to any ASR model output
+    skip = {DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT}
     for txt in sorted(output_dir.glob("*.txt")):
         if txt.name not in skip:
             return "whisper"
@@ -278,11 +283,16 @@ def hypothesis_to_stm(output_dir: Path, file_id: str, hypothesis: str = "auto") 
     elif fmt == "plain_merged":
         return plain_text_to_stm(output_dir / TRANSCRIPT_MERGED_TXT, file_id)
     elif fmt == "whisper":
-        # Prefer whisper_merged, then medium, then small
-        for name in (WHISPER_MERGED_TXT, "whisper_medium.txt", "whisper_small.txt"):
+        # Prefer merged (new then legacy), then any asr_*.txt or whisper_*.txt
+        for name in (ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT):
             p = output_dir / name
             if p.exists():
                 return plain_text_to_stm(p, file_id)
-        raise FileNotFoundError(f"No Whisper output found in {output_dir}")
+        # Fall back to any individual model output
+        for pattern in ("asr_*.txt", "whisper_*.txt"):
+            for p in sorted(output_dir.glob(pattern)):
+                if p.name not in (ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT):
+                    return plain_text_to_stm(p, file_id)
+        raise FileNotFoundError(f"No ASR output found in {output_dir}")
     else:
         raise FileNotFoundError(f"No hypothesis output found in {output_dir}")

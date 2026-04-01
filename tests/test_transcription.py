@@ -535,31 +535,40 @@ class TestEnsembleWhisperTranscripts:
         data = self._make_whisper_data(tmp_path, models=("medium",))
         _ensemble_whisper_transcripts(config, data)
         # With only one model, should return without ensembling
-        assert not (tmp_path / "whisper_merged.txt").exists()
+        assert not (tmp_path / "asr_merged.txt").exists()
 
-    def test_reuses_fresh_whisper_merged(self, tmp_path, capsys):
+    def test_reuses_fresh_asr_merged(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = self._make_whisper_data(tmp_path)
-        # Create ensembled.txt newer than whisper files
+        # Create asr_merged.txt newer than transcript files
         time.sleep(0.05)
-        ensembled = tmp_path / "whisper_merged.txt"
-        ensembled.write_text("cached whisper_merged text")
+        ensembled = tmp_path / "asr_merged.txt"
+        ensembled.write_text("cached asr_merged text")
+        _ensemble_whisper_transcripts(config, data)
+        out = capsys.readouterr().out
+        assert "Reusing: asr_merged.txt" in out
+        assert data.transcript_path == ensembled
+
+    def test_reuses_legacy_whisper_merged(self, tmp_path, capsys):
+        """Backward compat: legacy whisper_merged.txt is still recognized."""
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        data = self._make_whisper_data(tmp_path)
+        time.sleep(0.05)
+        legacy = tmp_path / "whisper_merged.txt"
+        legacy.write_text("cached legacy text")
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
         assert "Reusing: whisper_merged.txt" in out
-        assert data.transcript_path == ensembled
+        assert data.transcript_path == legacy
 
     def test_no_llm_uses_base(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
                               skip_existing=False)
         data = self._make_whisper_data(tmp_path)
-        # Write distinct content to trigger differences
-        (tmp_path / "whisper_small.txt").write_text("hello world from small")
-        (tmp_path / "whisper_medium.txt").write_text("hello world from medium")
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
         # Should use medium (larger) as base without LLM resolution
-        ensembled = (tmp_path / "whisper_merged.txt").read_text()
+        ensembled = (tmp_path / "asr_merged.txt").read_text()
         assert "medium" in ensembled
         assert "--no-llm" in out
 
@@ -571,15 +580,12 @@ class TestEnsembleWhisperTranscripts:
 
         _ensemble_whisper_transcripts(config, data)
         mock_resolve.assert_called_once()
-        assert (tmp_path / "whisper_merged.txt").read_text() == "resolved text"
+        assert (tmp_path / "asr_merged.txt").read_text() == "resolved text"
 
     def test_selects_largest_model_as_base(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
                               skip_existing=False)
         data = self._make_whisper_data(tmp_path, models=("tiny", "small", "large"))
-        (tmp_path / "whisper_tiny.txt").write_text("tiny text differs here")
-        (tmp_path / "whisper_small.txt").write_text("small text differs here")
-        (tmp_path / "whisper_large.txt").write_text("large text differs here")
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
         assert "Using large as base" in out
@@ -591,7 +597,7 @@ class TestEnsembleWhisperTranscripts:
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
         assert "[dry-run]" in out
-        assert not (tmp_path / "whisper_merged.txt").exists()
+        assert not (tmp_path / "asr_merged.txt").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -605,15 +611,29 @@ class TestRunWhisperModel:
         config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=True)
         data = SpeechData(audio_path=tmp_path / "audio.mp3")
         data.audio_path.write_text("fake")
-        # Create existing output that is newer than audio
+        # Create existing output that is newer than audio (new asr_ naming)
         time.sleep(0.05)
-        txt = tmp_path / "whisper_medium.txt"
+        txt = tmp_path / "asr_medium.txt"
         txt.write_text("existing transcript")
         deps = {"mlx_whisper": True, "whisper": False}
         _run_whisper_model(config, data, "medium", deps)
         out = capsys.readouterr().out
         assert "Reusing" in out
-        assert data.whisper_transcripts["medium"]["txt"] == txt
+        assert data.asr_transcripts["medium"]["txt"] == txt
+
+    def test_skip_existing_reuses_legacy_whisper(self, tmp_path, capsys):
+        """Backward compat: legacy whisper_*.txt files are reused."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=True)
+        data = SpeechData(audio_path=tmp_path / "audio.mp3")
+        data.audio_path.write_text("fake")
+        time.sleep(0.05)
+        txt = tmp_path / "whisper_medium.txt"
+        txt.write_text("legacy transcript")
+        deps = {"mlx_whisper": True, "whisper": False}
+        _run_whisper_model(config, data, "medium", deps)
+        out = capsys.readouterr().out
+        assert "Reusing" in out
+        assert data.asr_transcripts["medium"]["txt"] == txt
 
     def test_dry_run_skips(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, dry_run=True,
@@ -640,10 +660,10 @@ class TestRunWhisperModel:
         mock_run.side_effect = create_default_files
 
         _run_whisper_model(config, data, "small", deps)
-        # Should have renamed to model-specific names
-        assert (tmp_path / "whisper_small.txt").exists()
-        assert (tmp_path / "whisper_small.json").exists()
-        assert data.whisper_transcripts["small"]["txt"] == tmp_path / "whisper_small.txt"
+        # Should have renamed to asr_-prefixed names
+        assert (tmp_path / "asr_small.txt").exists()
+        assert (tmp_path / "asr_small.json").exists()
+        assert data.asr_transcripts["small"]["txt"] == tmp_path / "asr_small.txt"
 
     @patch("transcribe_critic.transcription.run_command")
     def test_mlx_whisper_unlinks_existing_before_rename(self, mock_run, tmp_path):
@@ -652,8 +672,8 @@ class TestRunWhisperModel:
         data.audio_path.write_text("fake")
         deps = {"mlx_whisper": True, "whisper": False}
         # Pre-create target files (from a previous run)
-        (tmp_path / "whisper_small.txt").write_text("old")
-        (tmp_path / "whisper_small.json").write_text("old")
+        (tmp_path / "asr_small.txt").write_text("old")
+        (tmp_path / "asr_small.json").write_text("old")
 
         def create_default_files(cmd, desc, verbose=False):
             (tmp_path / "audio.txt").write_text("new text")
@@ -662,7 +682,7 @@ class TestRunWhisperModel:
         mock_run.side_effect = create_default_files
 
         _run_whisper_model(config, data, "small", deps)
-        assert (tmp_path / "whisper_small.txt").read_text() == "new text"
+        assert (tmp_path / "asr_small.txt").read_text() == "new text"
 
     def test_openai_whisper_success(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
@@ -681,9 +701,9 @@ class TestRunWhisperModel:
         with patch.dict("sys.modules", {"whisper": mock_whisper}):
             _run_whisper_model(config, data, "medium", deps)
 
-        assert (tmp_path / "whisper_medium.txt").read_text() == "hello world"
-        assert (tmp_path / "whisper_medium.json").exists()
-        assert data.whisper_transcripts["medium"]["txt"] == tmp_path / "whisper_medium.txt"
+        assert (tmp_path / "asr_medium.txt").read_text() == "hello world"
+        assert (tmp_path / "asr_medium.json").exists()
+        assert data.asr_transcripts["medium"]["txt"] == tmp_path / "asr_medium.txt"
 
     @patch("transcribe_critic.transcription.run_command")
     def test_stores_none_when_files_missing(self, mock_run, tmp_path):
@@ -718,7 +738,7 @@ class TestTranscribeAudio:
     @patch("transcribe_critic.transcription.check_dependencies",
            return_value={"mlx_whisper": False, "whisper": False})
     def test_raises_without_whisper(self, mock_deps, tmp_path):
-        config = SpeechConfig(url="x", output_dir=tmp_path, asr_models=[])
+        config = SpeechConfig(url="x", output_dir=tmp_path, models=["distil-large-v3"])
         audio = tmp_path / "audio.mp3"
         audio.write_text("fake")
         data = SpeechData(audio_path=audio)
@@ -946,7 +966,7 @@ class TestRunWhisperModelHallucinationCollapse:
         mock_run.side_effect = create_hallucinated_output
 
         _run_whisper_model(config, data, "small", deps)
-        text = (tmp_path / "whisper_small.txt").read_text()
+        text = (tmp_path / "asr_small.txt").read_text()
         # Should be collapsed to 2 occurrences
         assert text.count("The unremarkable.") == 2
         assert "Good morning everyone." in text

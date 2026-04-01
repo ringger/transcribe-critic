@@ -776,7 +776,7 @@ class TestAnalyzeSourceSurvival:
         assert analysis.exists()
         content = analysis.read_text()
         assert "Source Survival Analysis" in content
-        assert "Whisper" in content
+        assert "ASR" in content
 
     def test_finds_most_similar(self, tmp_path, capsys):
         whisper = tmp_path / "whisper_merged.txt"

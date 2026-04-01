@@ -30,10 +30,10 @@ Examples:
     # Full pipeline with slide analysis (merging is automatic)
     transcribe-critic "https://youtube.com/watch?v=..." --analyze-slides
 
-    # Ensemble multiple Whisper models for better accuracy (default: small,medium,distil-large-v3)
-    transcribe-critic "https://youtube.com/watch?v=..." --whisper-models small,medium,distil-large-v3
+    # Ensemble multiple ASR models for better accuracy
+    transcribe-critic "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet,qwen3-asr
 
-    # Run without any LLM (Whisper only, free)
+    # Run without any LLM (ASR only, free)
     transcribe-critic "https://youtube.com/watch?v=..." --no-llm
 
     # Use Anthropic Claude API instead of local Ollama
@@ -42,8 +42,8 @@ Examples:
     # Per-stage LLM: Claude API for slides and summaries, local for merging
     transcribe-critic "https://youtube.com/watch?v=..." --slides-api --summary-api
 
-    # Custom output directory and model
-    transcribe-critic "https://youtube.com/watch?v=..." -o my_speech --whisper-models small
+    # Custom output directory and single model
+    transcribe-critic "https://youtube.com/watch?v=..." -o my_speech --models parakeet
 """
 
 import argparse
@@ -57,10 +57,12 @@ from transcribe_critic import __version__
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
-    MODEL_SIZES, ASR_MODEL_REGISTRY, get_model_quality_rank,
+    ALL_MODELS, MODEL_SIZES, ASR_MODEL_REGISTRY,
+    is_whisper_model, get_model_quality_rank,
     DEFAULT_CLAUDE_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_URL,
-    DEFAULT_WHISPER_MODELS, DEFAULT_ASR_MODELS,
-    AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT, WHISPER_MERGED_TXT,
+    DEFAULT_MODELS, DEFAULT_WHISPER_MODELS, DEFAULT_ASR_MODELS,
+    AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT,
+    ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT, WHISPER_MERGED_TXT,
     DIARIZATION_JSON, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
     ANALYSIS_MD, SLIDE_TIMESTAMPS_JSON,
     run_command, _print_reusing, _dry_run_skip, _should_skip,
@@ -100,42 +102,48 @@ def _hydrate_data(config: SpeechConfig, data: SpeechData) -> None:
     if cap.exists():
         data.captions_path = cap
 
-    # Whisper model transcripts
-    for txt in sorted(d.glob("whisper_*.txt")):
-        name = txt.stem  # e.g. "whisper_medium"
-        if "merged" in name:
-            continue
-        model = name.removeprefix("whisper_")
-        json_path = d / f"whisper_{model}.json"
-        data.whisper_transcripts[model] = {
-            "txt": txt,
-            "json": json_path if json_path.exists() else None,
-        }
-
-    # Non-Whisper ASR model transcripts
+    # ASR model transcripts (new asr_*.txt format first, legacy whisper_*.txt fallback)
     for txt in sorted(d.glob("asr_*.txt")):
-        short_name = txt.stem.removeprefix("asr_")
-        json_path = d / f"asr_{short_name}.json"
-        data.whisper_transcripts[short_name] = {
+        stem = txt.stem.removeprefix("asr_")
+        if stem.startswith("merged"):
+            continue
+        json_path = d / f"asr_{stem}.json"
+        data.asr_transcripts[stem] = {
             "txt": txt,
             "json": json_path if json_path.exists() else None,
         }
 
-    # Whisper merged (primary transcript when ensembling)
-    merged = d / WHISPER_MERGED_TXT
+    # Legacy whisper_*.txt files (only add if not already found via asr_*)
+    for txt in sorted(d.glob("whisper_*.txt")):
+        stem = txt.stem.removeprefix("whisper_")
+        if "merged" in stem:
+            continue
+        if stem in data.asr_transcripts:
+            continue  # already found as asr_*
+        json_path = d / f"whisper_{stem}.json"
+        data.asr_transcripts[stem] = {
+            "txt": txt,
+            "json": json_path if json_path.exists() else None,
+        }
+
+    # Ensemble merged (check new name first, then legacy)
+    merged = d / ASR_MERGED_TXT
+    legacy_merged = d / LEGACY_WHISPER_MERGED_TXT
     if merged.exists():
         data.transcript_path = merged
-    elif data.whisper_transcripts:
+    elif legacy_merged.exists():
+        data.transcript_path = legacy_merged
+    elif data.asr_transcripts:
         # Fall back to highest-ranked single model
-        best = max(data.whisper_transcripts.keys(), key=get_model_quality_rank)
-        data.transcript_path = data.whisper_transcripts[best]["txt"]
+        best = max(data.asr_transcripts.keys(), key=get_model_quality_rank)
+        data.transcript_path = data.asr_transcripts[best]["txt"]
 
     # Transcript JSON (use highest-ranked model's JSON for timestamps)
-    if data.whisper_transcripts:
-        ranked = sorted(data.whisper_transcripts.keys(),
+    if data.asr_transcripts:
+        ranked = sorted(data.asr_transcripts.keys(),
                         key=get_model_quality_rank, reverse=True)
         for model in ranked:
-            jp = data.whisper_transcripts[model].get("json")
+            jp = data.asr_transcripts[model].get("json")
             if jp:
                 data.transcript_json_path = jp
                 break
@@ -285,8 +293,8 @@ def estimate_api_cost(config: SpeechConfig, num_slides: int = 45, transcript_wor
         costs["details"].append(
             f"Source merging: {num_sources} sources × {num_chunks} chunks = ${merge_cost:.2f}")
 
-    if len(config.whisper_models) > 1:
-        num_models = len(config.whisper_models)
+    if len(config.models) > 1:
+        num_models = len(config.models)
         num_chunks = max(1, transcript_words // config.merge_chunk_words + 1)
         chunk_input_words = transcript_words * num_models // num_chunks + 500
         chunk_output_words = transcript_words // num_chunks
@@ -502,12 +510,16 @@ def analyze_source_survival(config: SpeechConfig, data: SpeechData) -> None:
     # Collect sources
     sources = []
 
-    # Whisper (merged from multiple models, or single model)
+    # ASR transcript (merged from multiple models, or single model)
     if data.transcript_path and data.transcript_path.exists():
         with open(data.transcript_path, 'r') as f:
-            whisper_text = f.read()
-        label = "whisper_merged" if WHISPER_MERGED_TXT in data.transcript_path.name else data.transcript_path.stem
-        sources.append((f"Whisper ({label})", whisper_text))
+            asr_text = f.read()
+        merged_names = (ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT)
+        if data.transcript_path.name in merged_names:
+            label = "asr_merged"
+        else:
+            label = data.transcript_path.stem
+        sources.append((f"ASR ({label})", asr_text))
 
     # YouTube captions
     if data.captions_path and data.captions_path.exists():
@@ -596,9 +608,9 @@ Examples:
   %(prog)s "https://youtube.com/watch?v=..."
   %(prog)s "https://youtube.com/watch?v=..." --analyze-slides
   %(prog)s "https://youtube.com/watch?v=..." --no-merge
-  %(prog)s "https://youtube.com/watch?v=..." --whisper-models small,medium,distil-large-v3
+  %(prog)s "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet,qwen3-asr
   %(prog)s "https://youtube.com/watch?v=..." --external-transcript URL
-  %(prog)s "https://youtube.com/watch?v=..." -o my_speech --whisper-models small
+  %(prog)s "https://youtube.com/watch?v=..." -o my_speech --models parakeet
   %(prog)s --podcast "https://www.iheart.com/podcast/.../episode/..."
         """
     )
@@ -617,18 +629,18 @@ Examples:
                         help="Output directory (default: ./transcripts/<title>)")
 
     # Transcription
-    whisper_group = parser.add_argument_group("transcription")
-    _default_whisper = ",".join(DEFAULT_WHISPER_MODELS)
-    whisper_group.add_argument("--whisper-models", default=_default_whisper,
-                        help=f"Whisper model(s) to use, comma-separated (default: {_default_whisper}). "
-                             f"Options: {', '.join(MODEL_SIZES)}. "
+    transcription_group = parser.add_argument_group("transcription")
+    _default_models = ",".join(DEFAULT_MODELS)
+    _all_options = ", ".join(ALL_MODELS.keys())
+    transcription_group.add_argument("--models", default=None,
+                        help=f"ASR model(s) to use, comma-separated (default: {_default_models}). "
+                             f"Options: {_all_options}. "
                              "Multiple models enables ensembling for better accuracy")
-    _default_asr = ",".join(DEFAULT_ASR_MODELS)
-    _asr_options = ", ".join(ASR_MODEL_REGISTRY.keys())
-    whisper_group.add_argument("--asr-models", default=_default_asr,
-                        help=f"Non-Whisper ASR model(s), comma-separated (default: {_default_asr}). "
-                             f"Options: {_asr_options}. "
-                             "Requires: pip install 'transcribe-critic[asr]'")
+    # Deprecated aliases (kept for backward compat)
+    transcription_group.add_argument("--whisper-models", default=None, dest="whisper_models",
+                        help="[Deprecated: use --models] Whisper model(s), comma-separated")
+    transcription_group.add_argument("--asr-models", default=None, dest="asr_models",
+                        help="[Deprecated: use --models] Non-Whisper ASR model(s), comma-separated")
 
     # Slides
     slides_group = parser.add_argument_group("slides")
@@ -755,21 +767,44 @@ Examples:
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Parse whisper models (comma-separated)
-    whisper_models = [m.strip() for m in args.whisper_models.split(",") if m.strip()]
-    for m in whisper_models:
-        if m not in MODEL_SIZES:
-            print(f"Invalid Whisper model: {m}")
-            print(f"Valid options: {', '.join(MODEL_SIZES)}")
-            sys.exit(1)
+    # Parse models — unified --models flag, with deprecated --whisper-models/--asr-models
+    import warnings
+    if args.models and (args.whisper_models or args.asr_models):
+        print("Error: --models cannot be combined with --whisper-models or --asr-models.")
+        print("Use --models alone (it accepts all model types).")
+        sys.exit(1)
 
-    # Parse non-Whisper ASR models (comma-separated, optional)
-    asr_models = [m.strip() for m in args.asr_models.split(",") if m.strip()]
-    for m in asr_models:
-        if m not in ASR_MODEL_REGISTRY:
-            print(f"Unknown ASR model: {m}")
-            print(f"Valid options: {', '.join(ASR_MODEL_REGISTRY.keys())}")
-            sys.exit(1)
+    if args.models:
+        models = [m.strip() for m in args.models.split(",") if m.strip()]
+        for m in models:
+            if m not in ALL_MODELS:
+                print(f"Unknown model: {m}")
+                print(f"Valid options: {', '.join(ALL_MODELS.keys())}")
+                sys.exit(1)
+    elif args.whisper_models or args.asr_models:
+        warnings.warn(
+            "--whisper-models and --asr-models are deprecated; use --models instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        models = []
+        if args.whisper_models:
+            wm = [m.strip() for m in args.whisper_models.split(",") if m.strip()]
+            for m in wm:
+                if m not in ALL_MODELS or not is_whisper_model(m):
+                    print(f"Invalid Whisper model: {m}")
+                    print(f"Valid Whisper options: {', '.join(m for m in ALL_MODELS if is_whisper_model(m))}")
+                    sys.exit(1)
+            models.extend(wm)
+        if args.asr_models:
+            am = [m.strip() for m in args.asr_models.split(",") if m.strip()]
+            for m in am:
+                if m not in ALL_MODELS or is_whisper_model(m):
+                    print(f"Unknown ASR model: {m}")
+                    print(f"Valid ASR options: {', '.join(m for m in ALL_MODELS if not is_whisper_model(m))}")
+                    sys.exit(1)
+            models.extend(am)
+    else:
+        models = list(DEFAULT_MODELS)
 
     # Determine LLM backend: --api or --api-key switches to cloud API
     use_api = args.api or bool(args.api_key)
@@ -791,8 +826,7 @@ Examples:
     config = SpeechConfig(
         url=args.url,
         output_dir=output_dir,
-        whisper_models=whisper_models,
-        asr_models=asr_models,
+        models=models,
         scene_threshold=args.scene_threshold,
         title=args.title,
         no_slides=no_slides,
@@ -852,7 +886,7 @@ Examples:
         config.merge_sources = True
 
     # Early validation: if using cloud API, check for API key
-    llm_features_requested = config.analyze_slides or config.merge_sources or len(config.whisper_models) > 1
+    llm_features_requested = config.analyze_slides or config.merge_sources or len(config.models) > 1
     if llm_features_requested and not config.no_llm and not config.local:
         api_key = config.api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
@@ -941,8 +975,8 @@ Examples:
             transcribe_audio(config, data)
 
         if _should_run_step("ensemble", config):
-            from transcribe_critic.transcription import _ensemble_whisper_transcripts
-            _ensemble_whisper_transcripts(config, data)
+            from transcribe_critic.transcription import _ensemble_asr_transcripts
+            _ensemble_asr_transcripts(config, data)
 
         if config.diarize and _should_run_step("diarize", config):
             diarize_audio(config, data)
@@ -985,13 +1019,12 @@ Examples:
         if data.captions_path and data.captions_path.exists():
             print(f"  - {data.captions_path.name} (captions)")
         # Show individual model transcripts if multiple
-        if len(data.whisper_transcripts) > 1:
-            for model, paths in data.whisper_transcripts.items():
+        if len(data.asr_transcripts) > 1:
+            for model, paths in data.asr_transcripts.items():
                 if paths.get("txt") and paths["txt"].exists():
-                    kind = "Whisper" if paths["txt"].name.startswith("whisper_") else "ASR"
-                    print(f"  - {paths['txt'].name} ({kind}: {model})")
+                    print(f"  - {paths['txt'].name} (ASR: {model})")
         if data.transcript_path and data.transcript_path.exists():
-            label = "ensemble-merged transcript" if len(data.whisper_transcripts) > 1 else "transcript"
+            label = "ensemble-merged transcript" if len(data.asr_transcripts) > 1 else "transcript"
             print(f"  - {data.transcript_path.name} ({label})")
         if data.transcript_json_path and data.transcript_json_path.exists():
             print(f"  - {data.transcript_json_path.name} (transcript with timestamps)")

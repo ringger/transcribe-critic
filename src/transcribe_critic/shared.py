@@ -32,57 +32,64 @@ def tprint(*args, **kwargs):
 
 print = tprint
 
-# Whisper model sizes in descending quality order (used for base-model selection)
-MODEL_SIZES = ["large", "distil-large-v3", "medium", "small", "base", "tiny"]
+# ---------------------------------------------------------------------------
+# Unified ASR model registry
+# ---------------------------------------------------------------------------
+# ALL_MODELS is the single source of truth for every supported model.
+# Each entry maps a short name to backend, quality_rank, and optional hf_id.
+# Quality ranks reflect Rev16 podcast eval (higher = better).
 
-# Map model short names to mlx-community HuggingFace model IDs
-MLX_MODEL_MAP = {
-    "distil-large-v3": "mlx-community/distil-whisper-large-v3",
+ALL_MODELS = {
+    # Whisper models (backend: "whisper")
+    "large":           {"backend": "whisper", "quality_rank": 6},
+    "distil-large-v3": {"backend": "whisper", "quality_rank": 5,
+                        "hf_id": "mlx-community/distil-whisper-large-v3"},
+    "medium":          {"backend": "whisper", "quality_rank": 4},
+    "small":           {"backend": "whisper", "quality_rank": 3},
+    "base":            {"backend": "whisper", "quality_rank": 2},
+    "tiny":            {"backend": "whisper", "quality_rank": 1},
+    # Non-Whisper ASR models
+    "granite-speech":  {"backend": "mlx_audio",    "quality_rank": 1,  # 105% WER — unusable on podcasts
+                        "hf_id": "mlx-community/granite-4.0-1b-speech-8bit"},
+    "qwen3-asr":       {"backend": "mlx_audio",    "quality_rank": 8,  # 25.3% avg WER on Rev16
+                        "hf_id": "mlx-community/Qwen3-ASR-1.7B-8bit"},
+    "parakeet":        {"backend": "parakeet_mlx", "quality_rank": 9,  # 24.7% avg WER — best single model
+                        "hf_id": "mlx-community/parakeet-tdt-0.6b-v2"},
 }
 
-# Quality ranking for all ASR models (higher = better, used for ensemble base selection)
-WHISPER_QUALITY_RANK = {
-    "large": 6, "distil-large-v3": 5, "medium": 4,
-    "small": 3, "base": 2, "tiny": 1,
-}
 
-# Non-Whisper ASR model registry: short name -> config
-# Quality ranks reflect Rev16 podcast eval, not leaderboard (which uses clean benchmarks).
-ASR_MODEL_REGISTRY = {
-    "granite-speech": {
-        "hf_id": "mlx-community/granite-4.0-1b-speech-8bit",
-        "backend": "mlx_audio",
-        "quality_rank": 1,   # 105% WER on Rev16 — unusable on podcasts
-    },
-    "qwen3-asr": {
-        "hf_id": "mlx-community/Qwen3-ASR-1.7B-8bit",
-        "backend": "mlx_audio",
-        "quality_rank": 8,   # 25.3% avg WER on Rev16
-    },
-    "parakeet": {
-        "hf_id": "mlx-community/parakeet-tdt-0.6b-v2",
-        "backend": "parakeet_mlx",
-        "quality_rank": 9,   # 24.7% avg WER on Rev16 — best single model
-    },
-}
+def is_whisper_model(name: str) -> bool:
+    """Return True if *name* is a Whisper model (backend == 'whisper')."""
+    entry = ALL_MODELS.get(name)
+    return entry is not None and entry["backend"] == "whisper"
 
 
 def get_model_quality_rank(model_name: str) -> int:
-    """Return quality rank for any ASR model (Whisper or non-Whisper)."""
-    if model_name in WHISPER_QUALITY_RANK:
-        return WHISPER_QUALITY_RANK[model_name]
-    entry = ASR_MODEL_REGISTRY.get(model_name)
+    """Return quality rank for any ASR model (higher = better)."""
+    entry = ALL_MODELS.get(model_name)
     if entry:
         return entry["quality_rank"]
     return 0
+
+
+# --- Deprecated aliases (kept for backward compat, will be removed) ---------
+MODEL_SIZES = [m for m, e in ALL_MODELS.items() if e["backend"] == "whisper"]
+MLX_MODEL_MAP = {m: e["hf_id"] for m, e in ALL_MODELS.items()
+                 if e["backend"] == "whisper" and "hf_id" in e}
+WHISPER_QUALITY_RANK = {m: e["quality_rank"] for m, e in ALL_MODELS.items()
+                        if e["backend"] == "whisper"}
+ASR_MODEL_REGISTRY = {m: e for m, e in ALL_MODELS.items()
+                      if e["backend"] != "whisper"}
 
 # Default LLM model names
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_LOCAL_MODEL = "qwen2.5:14b"
 DEFAULT_LOCAL_VISION_MODEL = "llava"
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/"
-DEFAULT_WHISPER_MODELS = ["distil-large-v3"]
-DEFAULT_ASR_MODELS = ["parakeet", "qwen3-asr"]
+DEFAULT_MODELS = ["distil-large-v3", "parakeet", "qwen3-asr"]
+# Deprecated — use DEFAULT_MODELS
+DEFAULT_WHISPER_MODELS = [m for m in DEFAULT_MODELS if is_whisper_model(m)]
+DEFAULT_ASR_MODELS = [m for m in DEFAULT_MODELS if not is_whisper_model(m)]
 
 # Common/stop words for filtering trivial diffs in ensembling and merging
 COMMON_WORDS = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
@@ -99,8 +106,10 @@ class SpeechConfig:
     """Configuration for speech transcription pipeline."""
     url: str
     output_dir: Path
-    whisper_models: list = field(default_factory=lambda: list(DEFAULT_WHISPER_MODELS))  # Can be multiple models
-    asr_models: list = field(default_factory=lambda: list(DEFAULT_ASR_MODELS))  # Non-Whisper ASR models
+    models: Optional[list] = None  # All ASR models to run (None = use defaults or legacy fields)
+    # Deprecated — use `models` instead
+    whisper_models: Optional[list] = None
+    asr_models: Optional[list] = None
     scene_threshold: float = 0.1
     analyze_slides: bool = False
     merge_sources: bool = True  # Merge YouTube captions with Whisper (default: on)
@@ -144,6 +153,23 @@ class SpeechConfig:
     summary_model: Optional[str] = None  # None = inherit from claude_model / local_model
     summary_api_key: Optional[str] = None  # None = inherit from api_key
 
+    def __post_init__(self):
+        # Resolve which models to use:
+        # 1. `models` explicitly set → use it.
+        # 2. Deprecated whisper_models/asr_models set → combine them.
+        # 3. Nothing set → DEFAULT_MODELS.
+        if self.models is not None:
+            pass  # caller set models explicitly
+        elif self.whisper_models is not None or self.asr_models is not None:
+            self.models = (self.whisper_models or []) + (self.asr_models or [])
+        else:
+            self.models = list(DEFAULT_MODELS)
+        # Always keep deprecated fields in sync (for code that still reads them)
+        if self.whisper_models is None:
+            self.whisper_models = [m for m in self.models if is_whisper_model(m)]
+        if self.asr_models is None:
+            self.asr_models = [m for m in self.models if not is_whisper_model(m)]
+
 
 def resolve_stage_config(
     config: SpeechConfig,
@@ -180,7 +206,9 @@ AUDIO_MP3 = "audio.mp3"
 AUDIO_WAV = "audio.wav"
 METADATA_JSON = "metadata.json"
 CAPTIONS_VTT = "captions.en.vtt"
-WHISPER_MERGED_TXT = "whisper_merged.txt"
+ASR_MERGED_TXT = "asr_merged.txt"
+LEGACY_WHISPER_MERGED_TXT = "whisper_merged.txt"
+WHISPER_MERGED_TXT = LEGACY_WHISPER_MERGED_TXT  # Deprecated alias
 DIARIZATION_JSON = "diarization.json"
 DIARIZED_TXT = "diarized.txt"
 TRANSCRIPT_MERGED_TXT = "transcript_merged.txt"
@@ -198,9 +226,18 @@ class SpeechData:
     audio_path: Optional[Path] = None
     video_path: Optional[Path] = None
     captions_path: Optional[Path] = None
-    transcript_path: Optional[Path] = None  # Primary transcript (or whisper_merged)
+    transcript_path: Optional[Path] = None  # Primary transcript (or asr_merged)
     transcript_json_path: Optional[Path] = None  # JSON with timestamps
-    whisper_transcripts: dict = field(default_factory=dict)  # {model: path} for each model
+    asr_transcripts: dict = field(default_factory=dict)  # {model: {"txt": Path, "json": Path}}
+
+    @property
+    def whisper_transcripts(self) -> dict:
+        """Deprecated alias for asr_transcripts."""
+        return self.asr_transcripts
+
+    @whisper_transcripts.setter
+    def whisper_transcripts(self, value: dict):
+        self.asr_transcripts = value
     merged_transcript_path: Optional[Path] = None  # Merged from multiple sources
     slides_dir: Optional[Path] = None
     slides_json_path: Optional[Path] = None

@@ -55,6 +55,7 @@ dev = [
 [project.scripts]
 transcribe-critic = "transcribe_critic.transcriber:main"
 transcribe-critic-eval = "transcribe_critic.eval:main"
+transcribe-critic-migrate = "transcribe_critic.migrate:main"
 
 [project.urls]
 Homepage = "https://pypi.org/project/transcribe-critic/"

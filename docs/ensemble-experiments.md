@@ -106,15 +106,15 @@ The [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leade
 **Hypothesis:** Architecturally diverse models should provide better ensemble diversity than combining Whisper sizes, since the 3-way Whisper ensemble (26.5%) failed to improve over distil-large-v3 alone (26.3%).
 
 **Implementation notes:**
-- `--asr-models parakeet,qwen3-asr,granite-speech` CLI flag added alongside `--whisper-models`
-- ASR outputs named `asr_{model}.txt/.json` (vs `whisper_{model}.txt/.json`)
+- `--models parakeet,qwen3-asr,granite-speech` unified CLI flag (replaces deprecated `--whisper-models` and `--asr-models`)
+- All ASR outputs use unified naming: `asr_{model}.txt/.json`
 - Granite-speech requires manual 240s audio chunking (no built-in long-audio support in mlx-audio); exhibited hallucination loops (caught by existing collapse logic)
 - Parakeet handles long audio natively (120s chunks), produces word-level timestamps
 - Qwen3-ASR handles long audio natively (1200s chunks), chunk-level timestamps only
 
 **Rev16 results (files 3, 4, 9):**
 
-| File | distil-large-v3 | parakeet | qwen3-asr | granite-speech | whisper_merged (3-way) |
+| File | distil-large-v3 | parakeet | qwen3-asr | granite-speech | asr_merged (3-way) |
 |------|----------------|----------|-----------|----------------|----------------------|
 | 3 | 29.6% | **27.3%** | empty | 93.1% | 29.4% |
 | 4 | 27.6% | **26.5%** | empty | 110.2% | 28.5% |
@@ -140,7 +140,7 @@ Initial 3-way ensemble (parakeet + qwen3-asr + distil-large-v3) scored **32.3% a
 2. Compared parakeet (best, 20.4%) to merged output (25.4%) for file9: 778 substitutions, 873 insertions
 3. Categorized diffs: 383 punctuation-only, 386 real word changes — the adjudicator was accepting too many changes
 4. Noticed merge used qwen3-asr as base (quality_rank=8) rather than parakeet (rank=7 at the time)
-5. **Found the bug:** `_resolve_whisper_diffs` re-selected base model using old `MODEL_SIZES` list (Whisper-only), ignoring the quality-ranked selection made by `_ensemble_whisper_transcripts`. The two code paths disagreed.
+5. **Found the bug:** `_resolve_whisper_diffs` re-selected base model using old `MODEL_SIZES` list (Whisper-only), ignoring the quality-ranked selection made by `_ensemble_asr_transcripts`. The two code paths disagreed.
 
 **Fix:** Made `_resolve_whisper_diffs` use `get_model_quality_rank()` consistently. Updated quality ranks to reflect Rev16 results (parakeet=9, qwen3=8) rather than leaderboard scores.
 
@@ -151,7 +151,7 @@ Initial 3-way ensemble (parakeet + qwen3-asr + distil-large-v3) scored **32.3% a
 | asr_parakeet (solo) | 27.3% | 26.5% | **20.4%** | **24.7%** |
 | 3-way merged (local, fixed) | 27.5% | **26.3%** | 20.6% | **24.8%** |
 | asr_qwen3-asr (solo) | 28.0% | 26.9% | 21.1% | 25.3% |
-| whisper_distil-large-v3 (solo) | 29.6% | 27.6% | 21.6% | 26.3% |
+| asr_distil-large-v3 (solo) | 29.6% | 27.6% | 21.6% | 26.3% |
 | 3-way merged (local, before fix) | 35.7% | 35.7% | 25.4% | 32.3% |
 
 The bug fix improved the ensemble from **32.3% to 24.8%** (7.5pp). The ensemble now matches parakeet solo, with the ensemble winning on file 4 (26.3% vs 26.5%).

@@ -12,7 +12,7 @@ The approach applies principles from [textual criticism](https://en.wikipedia.or
 
 - **Critical text merging**: Combines 2–3+ transcript sources into the most accurate version using blind, anonymous presentation to an LLM — no source receives preferential treatment
 - **wdiff-based alignment**: Uses longest common subsequence alignment (via `wdiff`) to keep chunks properly aligned across sources of different lengths, replacing naive proportional slicing
-- **Multi-model ASR ensembling**: Runs multiple ASR models (Whisper and/or non-Whisper) and resolves disagreements via LLM with anonymous A/B/C labels — supports mixing architecturally diverse models for better ensemble diversity
+- **Multi-model ASR ensembling**: Runs multiple ASR models from diverse architectures (default: distil-large-v3, parakeet, qwen3-asr) and resolves disagreements via LLM with anonymous A/B/C labels
 - **Anti-hallucination**: Whisper runs use `condition_on_previous_text=False` and other flags to prevent cascading hallucination; residual repetition loops are automatically detected and collapsed
 - **External transcript support**: Merges in human-edited transcripts (e.g., from publisher websites) as an additional source
 - **Structured transcript preservation**: When external transcripts have speaker labels and timestamps, the merged output preserves that structure
@@ -133,8 +133,8 @@ transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides --
 # Custom output directory
 transcribe-critic "https://youtube.com/watch?v=..." -o ./my_transcript
 
-# Use specific ASR models (default: distil-large-v3,parakeet,qwen3-asr)
-transcribe-critic "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet
+# Choose specific ASR models (default: distil-large-v3,parakeet,qwen3-asr)
+transcribe-critic "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet,qwen3-asr
 
 # Use a single model
 transcribe-critic "https://youtube.com/watch?v=..." --models parakeet

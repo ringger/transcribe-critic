@@ -58,7 +58,7 @@ from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
     ALL_MODELS, MODEL_SIZES, ASR_MODEL_REGISTRY,
-    is_whisper_model, get_model_quality_rank,
+    is_whisper_model, get_model_quality_rank, discover_transcript_files,
     DEFAULT_CLAUDE_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_URL,
     DEFAULT_MODELS, DEFAULT_WHISPER_MODELS, DEFAULT_ASR_MODELS,
     AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT,
@@ -102,29 +102,10 @@ def _hydrate_data(config: SpeechConfig, data: SpeechData) -> None:
     if cap.exists():
         data.captions_path = cap
 
-    # ASR model transcripts (new asr_*.txt format first, legacy whisper_*.txt fallback)
-    for txt in sorted(d.glob("asr_*.txt")):
-        stem = txt.stem.removeprefix("asr_")
-        if stem.startswith("merged"):
-            continue
-        json_path = d / f"asr_{stem}.json"
-        data.asr_transcripts[stem] = {
-            "txt": txt,
-            "json": json_path if json_path.exists() else None,
-        }
-
-    # Legacy whisper_*.txt files (only add if not already found via asr_*)
-    for txt in sorted(d.glob("whisper_*.txt")):
-        stem = txt.stem.removeprefix("whisper_")
-        if "merged" in stem:
-            continue
-        if stem in data.asr_transcripts:
-            continue  # already found as asr_*
-        json_path = d / f"whisper_{stem}.json"
-        data.asr_transcripts[stem] = {
-            "txt": txt,
-            "json": json_path if json_path.exists() else None,
-        }
+    # ASR model transcripts (new asr_*.txt first, legacy whisper_*.txt fallback)
+    for model, txt, prefix in discover_transcript_files(d):
+        json_path = d / f"{prefix}_{model}.json"
+        data.register_transcript(model, txt, json_path)
 
     # Ensemble merged (check new name first, then legacy)
     merged = d / ASR_MERGED_TXT
@@ -787,22 +768,22 @@ Examples:
             DeprecationWarning, stacklevel=2,
         )
         models = []
+        def _validate_legacy_models(csv_arg, want_whisper):
+            """Parse and validate a deprecated comma-separated model list."""
+            parsed = [m.strip() for m in csv_arg.split(",") if m.strip()]
+            label = "Whisper" if want_whisper else "ASR"
+            valid = [m for m in ALL_MODELS if is_whisper_model(m) == want_whisper]
+            for m in parsed:
+                if m not in ALL_MODELS or is_whisper_model(m) != want_whisper:
+                    print(f"Invalid {label} model: {m}")
+                    print(f"Valid {label} options: {', '.join(valid)}")
+                    sys.exit(1)
+            return parsed
+
         if args.whisper_models:
-            wm = [m.strip() for m in args.whisper_models.split(",") if m.strip()]
-            for m in wm:
-                if m not in ALL_MODELS or not is_whisper_model(m):
-                    print(f"Invalid Whisper model: {m}")
-                    print(f"Valid Whisper options: {', '.join(m for m in ALL_MODELS if is_whisper_model(m))}")
-                    sys.exit(1)
-            models.extend(wm)
+            models.extend(_validate_legacy_models(args.whisper_models, want_whisper=True))
         if args.asr_models:
-            am = [m.strip() for m in args.asr_models.split(",") if m.strip()]
-            for m in am:
-                if m not in ALL_MODELS or is_whisper_model(m):
-                    print(f"Unknown ASR model: {m}")
-                    print(f"Valid ASR options: {', '.join(m for m in ALL_MODELS if not is_whisper_model(m))}")
-                    sys.exit(1)
-            models.extend(am)
+            models.extend(_validate_legacy_models(args.asr_models, want_whisper=False))
     else:
         models = list(DEFAULT_MODELS)
 

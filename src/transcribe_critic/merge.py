@@ -16,7 +16,7 @@ from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, COMMON_WORDS,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
-    is_up_to_date, _save_json,
+    is_up_to_date, _save_json, validate_checkpoint_version,
 )
 
 
@@ -409,11 +409,7 @@ def _init_merge_chunks_dir(config: SpeechConfig) -> 'Path':
     from pathlib import Path
     chunks_dir = config.output_dir / "merge_chunks"
     chunks_dir.mkdir(exist_ok=True)
-    version_file = chunks_dir / ".version"
-    if not version_file.exists() or version_file.read_text().strip() != MERGE_CHECKPOINT_VERSION:
-        for old_chunk in chunks_dir.glob("chunk_*.json"):
-            old_chunk.unlink()
-        version_file.write_text(MERGE_CHECKPOINT_VERSION)
+    validate_checkpoint_version(chunks_dir, MERGE_CHECKPOINT_VERSION, "chunk_*.json")
     return chunks_dir
 
 

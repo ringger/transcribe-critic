@@ -17,7 +17,7 @@ from transcribe_critic.shared import (
     SpeechConfig, SpeechData, is_up_to_date,
     ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT,
     WHISPER_MERGED_TXT,  # deprecated alias, kept for external importers
-    COMMON_WORDS, MLX_MODEL_MAP,
+    COMMON_WORDS, MLX_MODEL_MAP, validate_checkpoint_version,
     ALL_MODELS, ASR_MODEL_REGISTRY, is_whisper_model, get_model_quality_rank,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
     run_command, _save_json, _print_reusing, _dry_run_skip, _should_skip,
@@ -129,6 +129,33 @@ def collapse_repetition_loops(text: str, min_repeats: int = 4,
     result_words.extend(words[i:])
 
     return " ".join(result_words), loops
+
+
+def _collapse_and_report_hallucinations(txt_path: Path) -> None:
+    """Read transcript, collapse hallucination loops, write back, and report."""
+    if not txt_path.exists():
+        return
+    text = txt_path.read_text()
+    collapsed, loops = collapse_repetition_loops(text)
+    if loops:
+        txt_path.write_text(collapsed)
+        total_removed = sum(
+            len(l["phrase"].split()) * (l["count"] - 2) for l in loops
+        )
+        print(f"  Collapsed {len(loops)} hallucination loop(s) "
+              f"({total_removed} words removed)")
+
+
+def _save_transcript_pair(txt_path: Path, json_path: Path,
+                          text: str, segments: list = None,
+                          language: str = "en") -> None:
+    """Save a matched txt + json transcript pair."""
+    txt_path.write_text(text)
+    _save_json(json_path, {
+        "text": text,
+        "segments": segments or [],
+        "language": language,
+    })
 
 
 def _select_largest_model_json(data: SpeechData):
@@ -592,12 +619,8 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
     # Initialize checkpoint directory
     ensemble_dir = config.output_dir / "ensemble_chunks"
     ensemble_dir.mkdir(exist_ok=True)
-    version_file = ensemble_dir / ".version"
     ENSEMBLE_CHECKPOINT_VERSION = "v3"  # bump to invalidate old checkpoints
-    if not version_file.exists() or version_file.read_text().strip() != ENSEMBLE_CHECKPOINT_VERSION:
-        for old_file in ensemble_dir.glob("cluster_*.json"):
-            old_file.unlink()
-        version_file.write_text(ENSEMBLE_CHECKPOINT_VERSION)
+    validate_checkpoint_version(ensemble_dir, ENSEMBLE_CHECKPOINT_VERSION, "cluster_*.json")
 
     # Determine source paths for staleness checks
     whisper_inputs = [
@@ -809,7 +832,7 @@ def _run_whisper_model(config: SpeechConfig, data: SpeechData, model: str, deps:
     # Check if up to date (output newer than audio input)
     if _should_skip(config, txt_path, f"transcribe with Whisper {model}", data.audio_path):
         if txt_path.exists():
-            data.asr_transcripts[model] = {"txt": txt_path, "json": json_path if json_path.exists() else None}
+            data.register_transcript(model, txt_path, json_path)
         return
 
     # New runs always write to asr_ prefix
@@ -871,31 +894,13 @@ def _run_whisper_model(config: SpeechConfig, data: SpeechData, model: str, deps:
             word_timestamps=True,
         )
 
-        with open(txt_path, 'w') as f:
-            f.write(result["text"])
+        _save_transcript_pair(txt_path, json_path, result["text"],
+                              result.get("segments", []),
+                              result.get("language", "en"))
 
-        _save_json(json_path, {
-                "text": result["text"],
-                "segments": result.get("segments", []),
-                "language": result.get("language", "en")
-            })
+    _collapse_and_report_hallucinations(txt_path)
 
-    # Collapse Whisper hallucination loops in the text output
-    if txt_path.exists():
-        text = txt_path.read_text()
-        collapsed, loops = collapse_repetition_loops(text)
-        if loops:
-            txt_path.write_text(collapsed)
-            total_removed = sum(
-                len(l["phrase"].split()) * (l["count"] - 2) for l in loops
-            )
-            print(f"  Collapsed {len(loops)} hallucination loop(s) "
-                  f"({total_removed} words removed)")
-
-    data.asr_transcripts[model] = {
-        "txt": txt_path if txt_path.exists() else None,
-        "json": json_path if json_path.exists() else None
-    }
+    data.register_transcript(model, txt_path, json_path)
     print(f"  {model} transcript saved: {txt_path.name}")
 
 
@@ -914,10 +919,7 @@ def _run_asr_model(config: SpeechConfig, data: SpeechData, short_name: str, deps
 
     if _should_skip(config, txt_path, f"transcribe with {short_name}", data.audio_path):
         if txt_path.exists():
-            data.asr_transcripts[short_name] = {
-                "txt": txt_path,
-                "json": json_path if json_path.exists() else None,
-            }
+            data.register_transcript(short_name, txt_path, json_path)
         return
 
     # Check backend availability
@@ -936,22 +938,9 @@ def _run_asr_model(config: SpeechConfig, data: SpeechData, short_name: str, deps
     elif backend == "mlx_audio":
         _run_mlx_audio(data.audio_path, hf_id, txt_path, json_path, config.verbose)
 
-    # Collapse hallucination loops in the text output
-    if txt_path.exists():
-        text = txt_path.read_text()
-        collapsed, loops = collapse_repetition_loops(text)
-        if loops:
-            txt_path.write_text(collapsed)
-            total_removed = sum(
-                len(l["phrase"].split()) * (l["count"] - 2) for l in loops
-            )
-            print(f"  Collapsed {len(loops)} hallucination loop(s) "
-                  f"({total_removed} words removed)")
+    _collapse_and_report_hallucinations(txt_path)
 
-    data.asr_transcripts[short_name] = {
-        "txt": txt_path if txt_path.exists() else None,
-        "json": json_path if json_path.exists() else None,
-    }
+    data.register_transcript(short_name, txt_path, json_path)
     print(f"  {short_name} transcript saved: {txt_path.name}")
 
 
@@ -963,10 +952,7 @@ def _run_parakeet(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path,
     model = from_pretrained(hf_id)
     result = model.transcribe(str(audio_path), chunk_duration=120.0)
 
-    # Write plain text
-    txt_path.write_text(result.text)
-
-    # Write Whisper-compatible JSON (segments from sentences, words from tokens)
+    # Build Whisper-compatible segments from sentences/tokens
     segments = []
     for sentence in result.sentences:
         words = [
@@ -979,11 +965,7 @@ def _run_parakeet(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path,
             "text": sentence.text,
             "words": words,
         })
-    _save_json(json_path, {
-        "text": result.text,
-        "segments": segments,
-        "language": "en",
-    })
+    _save_transcript_pair(txt_path, json_path, result.text, segments)
 
 
 def _patch_hf_config(hf_id: str) -> None:
@@ -1099,13 +1081,9 @@ def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path
             # and generous max_tokens (default 8192 cuts off before chunk completes)
             result = model.generate(str(wav_path), verbose=verbose,
                                     chunk_duration=300.0, max_tokens=32768)
-            txt_path.write_text(result.text)
-            segments = result.segments or []
-            _save_json(json_path, {
-                "text": result.text,
-                "segments": segments,
-                "language": getattr(result, "language", None) or "en",
-            })
+            _save_transcript_pair(txt_path, json_path, result.text,
+                                  result.segments or [],
+                                  getattr(result, "language", None) or "en")
             return
 
         # Models without built-in chunking (e.g., Granite Speech) — chunk manually
@@ -1113,12 +1091,9 @@ def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path
 
         if len(chunks) == 1:
             result = model.generate(str(chunks[0][0]), verbose=verbose)
-            txt_path.write_text(result.text)
-            _save_json(json_path, {
-                "text": result.text,
-                "segments": result.segments or [],
-                "language": getattr(result, "language", None) or "en",
-            })
+            _save_transcript_pair(txt_path, json_path, result.text,
+                                  result.segments or [],
+                                  getattr(result, "language", None) or "en")
             return
 
         all_texts = []
@@ -1135,12 +1110,7 @@ def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path
                 all_segments.append(seg_copy)
 
         full_text = " ".join(all_texts)
-        txt_path.write_text(full_text)
-        _save_json(json_path, {
-            "text": full_text,
-            "segments": all_segments,
-            "language": "en",
-        })
+        _save_transcript_pair(txt_path, json_path, full_text, all_segments)
 
         # Clean up chunk files
         chunk_dir = wav_path.parent / "_asr_chunks"

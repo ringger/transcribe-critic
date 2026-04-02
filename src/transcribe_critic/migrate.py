@@ -8,7 +8,17 @@ import argparse
 import sys
 from pathlib import Path
 
-from transcribe_critic.shared import LEGACY_WHISPER_MERGED_TXT, ASR_MERGED_TXT
+from transcribe_critic.shared import (
+    LEGACY_WHISPER_MERGED_TXT, ASR_MERGED_TXT, discover_transcript_files,
+)
+
+
+def _plan_rename(old: Path, new: Path, renames: list) -> None:
+    """Add a rename pair, or print SKIP if target exists."""
+    if new.exists():
+        print(f"  SKIP {old.name} → {new.name} (target already exists)")
+    else:
+        renames.append((old, new))
 
 
 def migrate_directory(directory: Path, *, dry_run: bool = False) -> list[tuple[Path, Path]]:
@@ -20,26 +30,18 @@ def migrate_directory(directory: Path, *, dry_run: bool = False) -> list[tuple[P
     renames = []
 
     # Rename whisper_{model}.txt/.json → asr_{model}.txt/.json
-    for pattern in ("whisper_*.txt", "whisper_*.json"):
-        for old in sorted(directory.glob(pattern)):
-            stem = old.stem  # e.g. "whisper_medium"
-            if "merged" in stem:
-                continue  # handled separately
-            model = stem.removeprefix("whisper_")
-            new = old.parent / f"asr_{model}{old.suffix}"
-            if new.exists():
-                print(f"  SKIP {old.name} → {new.name} (target already exists)")
-                continue
-            renames.append((old, new))
+    for model, txt, prefix in discover_transcript_files(directory):
+        if prefix != "whisper":
+            continue  # already asr_*, nothing to migrate
+        _plan_rename(txt, directory / f"asr_{model}.txt", renames)
+        legacy_json = directory / f"whisper_{model}.json"
+        if legacy_json.exists():
+            _plan_rename(legacy_json, directory / f"asr_{model}.json", renames)
 
     # Rename whisper_merged.txt → asr_merged.txt
     legacy_merged = directory / LEGACY_WHISPER_MERGED_TXT
     if legacy_merged.exists():
-        new_merged = directory / ASR_MERGED_TXT
-        if new_merged.exists():
-            print(f"  SKIP {legacy_merged.name} → {new_merged.name} (target already exists)")
-        else:
-            renames.append((legacy_merged, new_merged))
+        _plan_rename(legacy_merged, directory / ASR_MERGED_TXT, renames)
 
     # Execute renames (or just report in dry-run)
     for old, new in renames:

@@ -26,14 +26,14 @@ class TestMigrateDirectory:
         assert not (tmp_path / "whisper_merged.txt").exists()
 
     def test_skips_when_target_exists(self, tmp_path, capsys):
+        """When asr_* already exists, whisper_* is not migrated."""
         (tmp_path / "whisper_small.txt").write_text("old")
         (tmp_path / "asr_small.txt").write_text("new")
         renames = migrate_directory(tmp_path)
         assert len(renames) == 0
-        out = capsys.readouterr().out
-        assert "SKIP" in out
         # Original should be untouched
         assert (tmp_path / "whisper_small.txt").read_text() == "old"
+        assert (tmp_path / "asr_small.txt").read_text() == "new"
 
     def test_dry_run_no_changes(self, tmp_path, capsys):
         (tmp_path / "whisper_small.txt").write_text("small")

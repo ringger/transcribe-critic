@@ -238,6 +238,14 @@ class SpeechData:
     @whisper_transcripts.setter
     def whisper_transcripts(self, value: dict):
         self.asr_transcripts = value
+
+    def register_transcript(self, model: str, txt_path: Path, json_path: Path = None) -> None:
+        """Register a transcript file pair for a model."""
+        self.asr_transcripts[model] = {
+            "txt": txt_path if txt_path and txt_path.exists() else None,
+            "json": json_path if json_path and json_path.exists() else None,
+        }
+
     merged_transcript_path: Optional[Path] = None  # Merged from multiple sources
     slides_dir: Optional[Path] = None
     slides_json_path: Optional[Path] = None
@@ -254,6 +262,44 @@ class SpeechData:
 def _is_url(s: str) -> bool:
     """Check if a string looks like an HTTP(S) URL."""
     return s.startswith(("http://", "https://"))
+
+
+def discover_transcript_files(directory: Path) -> list[tuple[str, Path, str]]:
+    """Discover ASR transcript .txt files (new asr_* and legacy whisper_* naming).
+
+    Returns list of (model_name, txt_path, prefix) tuples where prefix is
+    'asr' or 'whisper'. New asr_* files take priority over legacy whisper_*.
+    Merged files are excluded.
+    """
+    results = []
+    seen_models = set()
+
+    # New naming first
+    for txt in sorted(directory.glob("asr_*.txt")):
+        model = txt.stem.removeprefix("asr_")
+        if model.startswith("merged"):
+            continue
+        results.append((model, txt, "asr"))
+        seen_models.add(model)
+
+    # Legacy naming (skip if already found)
+    for txt in sorted(directory.glob("whisper_*.txt")):
+        model = txt.stem.removeprefix("whisper_")
+        if "merged" in model or model in seen_models:
+            continue
+        results.append((model, txt, "whisper"))
+
+    return results
+
+
+def validate_checkpoint_version(checkpoint_dir: Path, version: str,
+                                glob_pattern: str = "*.json") -> None:
+    """Clear stale checkpoint files if the version has changed."""
+    version_file = checkpoint_dir / ".version"
+    if not version_file.exists() or version_file.read_text().strip() != version:
+        for old_file in checkpoint_dir.glob(glob_pattern):
+            old_file.unlink()
+        version_file.write_text(version)
 
 
 def is_up_to_date(output: Path, *inputs: Path) -> bool:

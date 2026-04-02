@@ -533,14 +533,14 @@ class TestEnsembleWhisperTranscripts:
         return data
 
     def test_skips_when_single_model(self, tmp_path, capsys):
-        config = SpeechConfig(url="x", output_dir=tmp_path)
+        config = SpeechConfig(url="x", output_dir=tmp_path, models=["medium"])
         data = self._make_whisper_data(tmp_path, models=("medium",))
         _ensemble_whisper_transcripts(config, data)
         # With only one model, should return without ensembling
         assert not (tmp_path / "asr_merged.txt").exists()
 
     def test_reuses_fresh_asr_merged(self, tmp_path, capsys):
-        config = SpeechConfig(url="x", output_dir=tmp_path)
+        config = SpeechConfig(url="x", output_dir=tmp_path, models=["small", "medium"])
         data = self._make_whisper_data(tmp_path)
         # Create asr_merged.txt newer than transcript files
         time.sleep(0.05)
@@ -553,7 +553,7 @@ class TestEnsembleWhisperTranscripts:
 
     def test_reuses_legacy_whisper_merged(self, tmp_path, capsys):
         """Backward compat: legacy whisper_merged.txt is still recognized."""
-        config = SpeechConfig(url="x", output_dir=tmp_path)
+        config = SpeechConfig(url="x", output_dir=tmp_path, models=["small", "medium"])
         data = self._make_whisper_data(tmp_path)
         time.sleep(0.05)
         legacy = tmp_path / "whisper_merged.txt"
@@ -565,7 +565,7 @@ class TestEnsembleWhisperTranscripts:
 
     def test_no_llm_uses_base(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
-                              skip_existing=False)
+                              skip_existing=False, models=["small", "medium"])
         data = self._make_whisper_data(tmp_path)
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
@@ -576,7 +576,8 @@ class TestEnsembleWhisperTranscripts:
 
     @patch("transcribe_critic.transcription._resolve_whisper_diffs")
     def test_calls_resolve(self, mock_resolve, tmp_path):
-        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False,
+                              models=["small", "medium"])
         data = self._make_whisper_data(tmp_path)
         mock_resolve.return_value = "resolved text"
 
@@ -586,7 +587,7 @@ class TestEnsembleWhisperTranscripts:
 
     def test_selects_largest_model_as_base(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
-                              skip_existing=False)
+                              skip_existing=False, models=["tiny", "small", "large"])
         data = self._make_whisper_data(tmp_path, models=("tiny", "small", "large"))
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
@@ -594,11 +595,37 @@ class TestEnsembleWhisperTranscripts:
 
     def test_dry_run_skips(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, dry_run=True,
-                              skip_existing=False)
+                              skip_existing=False, models=["small", "medium"])
         data = self._make_whisper_data(tmp_path)
         _ensemble_whisper_transcripts(config, data)
         out = capsys.readouterr().out
         assert "[dry-run]" in out
+        assert not (tmp_path / "asr_merged.txt").exists()
+
+    def test_filters_to_requested_models(self, tmp_path, capsys):
+        """Ensemble should only use models in config.models, ignoring extras on disk."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
+                              skip_existing=False, models=["small", "medium"])
+        data = self._make_whisper_data(tmp_path, models=("small", "medium", "large"))
+        _ensemble_whisper_transcripts(config, data)
+        out = capsys.readouterr().out
+        # large should be skipped
+        assert "Skipping unrequested" in out
+        assert "large" in out
+        # Should still produce merged output from the 2 requested models
+        assert (tmp_path / "asr_merged.txt").exists()
+
+    def test_ignores_disk_only_models(self, tmp_path, capsys):
+        """Models found on disk but not in config.models are excluded entirely."""
+        # Config only requests medium
+        config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
+                              skip_existing=False, models=["medium"])
+        # But disk has both small and medium
+        data = self._make_whisper_data(tmp_path, models=("small", "medium"))
+        _ensemble_whisper_transcripts(config, data)
+        out = capsys.readouterr().out
+        assert "Skipping unrequested" in out
+        # Only 1 model after filtering → no ensemble
         assert not (tmp_path / "asr_merged.txt").exists()
 
 
@@ -1084,7 +1111,7 @@ class TestEnsembleDryRunCheckpoints:
     def test_dry_run_shows_cached_cluster_count(self, tmp_path, capsys):
         """Dry-run with cached clusters shows 'X/Y clusters cached'."""
         config = SpeechConfig(url="x", output_dir=tmp_path, dry_run=True,
-                              skip_existing=False)
+                              skip_existing=False, models=["small", "medium"])
         # Create whisper transcripts
         data = SpeechData(audio_path=tmp_path / "audio.mp3")
         data.audio_path.write_text("fake")
@@ -1334,7 +1361,8 @@ class TestEnsembleBaseSelection:
 
     def test_selects_parakeet_over_whisper(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
-                              skip_existing=False)
+                              skip_existing=False,
+                              models=["parakeet", "distil-large-v3"])
         data = SpeechData()
         data.audio_path = tmp_path / "audio.mp3"
         data.audio_path.write_text("fake")
@@ -1353,7 +1381,8 @@ class TestEnsembleBaseSelection:
 
     def test_selects_qwen3_over_distil(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path, no_llm=True,
-                              skip_existing=False)
+                              skip_existing=False,
+                              models=["qwen3-asr", "distil-large-v3"])
         data = SpeechData()
         data.audio_path = tmp_path / "audio.mp3"
         data.audio_path.write_text("fake")

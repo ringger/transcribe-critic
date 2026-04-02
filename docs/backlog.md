@@ -4,7 +4,7 @@
 
 - ~~**Remove Whisper-centric naming throughout codebase.**~~ ✅ Done. Unified `ALL_MODELS` registry, `--models` CLI flag (old flags deprecated), `asr_*.txt` file naming with backward-compat read-both, `transcribe-critic-migrate` utility. See commit history.
 
-- **Ensemble should respect requested models, not discover from disk.** `_hydrate_data()` picks up all transcripts on disk regardless of `--models`. The ensemble included unwanted models (granite, small, medium) because their files were present. Need a filter mechanism so ensemble only uses the models the user asked for.
+- ~~**Ensemble should respect requested models, not discover from disk.**~~ ✅ Done. `_ensemble_asr_transcripts()` now filters `data.asr_transcripts` to only models in `config.models`, with a log message for skipped models.
 
 ## Cross-Architecture Ensemble Improvements
 

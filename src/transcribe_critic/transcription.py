@@ -1123,15 +1123,24 @@ def _run_mlx_audio(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path
 
 def _ensemble_asr_transcripts(config: SpeechConfig, data: SpeechData) -> None:
     """Adjudicate multiple ASR transcripts using wdiff."""
-    models = list(data.asr_transcripts.keys())
+    # Filter to only models the user requested (config.models), ignoring
+    # leftover transcripts on disk from previous runs with different models.
+    requested = set(config.models) if config.models else None
+    if requested:
+        models = [m for m in data.asr_transcripts if m in requested]
+        skipped = set(data.asr_transcripts) - requested
+        if skipped:
+            print(f"  Skipping unrequested models found on disk: {', '.join(sorted(skipped))}")
+    else:
+        models = list(data.asr_transcripts.keys())
     # Check for existing merged file (new or legacy name)
     if data.audio_path:
         merged_path = config.output_dir / ASR_MERGED_TXT
         legacy_merged = config.output_dir / LEGACY_WHISPER_MERGED_TXT
         if not merged_path.exists() and legacy_merged.exists():
             merged_path = legacy_merged  # use legacy for skip check
-        asr_inputs = [paths["txt"] for paths in data.asr_transcripts.values()
-                      if paths.get("txt")]
+        asr_inputs = [data.asr_transcripts[m]["txt"] for m in models
+                      if data.asr_transcripts[m].get("txt")]
         action = f"adjudicate {len(models)} ASR transcripts ({', '.join(models)})"
         if config.dry_run:
             # Show checkpoint status in dry-run
@@ -1152,10 +1161,11 @@ def _ensemble_asr_transcripts(config: SpeechConfig, data: SpeechData) -> None:
     if len(models) < 2:
         return
 
-    # Read all transcripts
+    # Read transcripts for requested models only
     transcripts = {}
-    for model, paths in data.asr_transcripts.items():
-        if paths["txt"] and paths["txt"].exists():
+    for model in models:
+        paths = data.asr_transcripts.get(model, {})
+        if paths.get("txt") and paths["txt"].exists():
             with open(paths["txt"], 'r') as f:
                 transcripts[model] = f.read()
 

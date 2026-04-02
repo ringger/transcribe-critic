@@ -117,6 +117,56 @@ class TestScoreFile:
         assert any("No transcript outputs found" in e for r in results for e in r.errors)
 
 
+    @patch("transcribe_critic.eval.score._score_stm")
+    def test_scores_all_variants(self, mock_score, tmp_path):
+        """hypothesis='all' scores each discovered transcript variant."""
+        run_dir = tmp_path / "runs"
+        out_dir = run_dir / "file001"
+        out_dir.mkdir(parents=True)
+        (out_dir / "asr_parakeet.txt").write_text("hello world")
+        (out_dir / "asr_distil-large-v3.txt").write_text("hello world")
+        ref_dir = tmp_path / "ref"
+        ref_dir.mkdir()
+        (ref_dir / "001.stm").write_text("file001 1 spk 0.0 10.0 hello world")
+
+        mock_score.return_value = FileResult(file_id="001", wer=0.0)
+        entry = _make_entry(ref_stm_path="ref/001.stm")
+        results = score_file(entry, tmp_path, run_dir, ["wer"], hypothesis="all")
+        assert len(results) == 2
+        assert mock_score.call_count == 2
+
+    @patch("transcribe_critic.eval.score._score_stm")
+    def test_scores_single_hypothesis(self, mock_score, tmp_path):
+        """Single hypothesis mode scores one variant."""
+        run_dir = tmp_path / "runs"
+        out_dir = run_dir / "file001"
+        out_dir.mkdir(parents=True)
+        (out_dir / "asr_merged.txt").write_text("hello world")
+        ref_dir = tmp_path / "ref"
+        ref_dir.mkdir()
+        (ref_dir / "001.stm").write_text("file001 1 spk 0.0 10.0 hello world")
+
+        mock_score.return_value = FileResult(file_id="001", wer=0.0)
+        entry = _make_entry(ref_stm_path="ref/001.stm")
+        results = score_file(entry, tmp_path, run_dir, ["wer"], hypothesis="auto")
+        assert len(results) == 1
+
+    def test_hypothesis_conversion_error(self, tmp_path):
+        """When hypothesis conversion fails, returns error in result."""
+        run_dir = tmp_path / "runs"
+        out_dir = run_dir / "file001"
+        out_dir.mkdir(parents=True)
+        ref_dir = tmp_path / "ref"
+        ref_dir.mkdir()
+        (ref_dir / "001.stm").write_text("file001 1 spk 0.0 10.0 hello world")
+
+        entry = _make_entry(ref_stm_path="ref/001.stm")
+        # No transcript files → hypothesis_to_stm will raise
+        results = score_file(entry, tmp_path, run_dir, ["wer"], hypothesis="auto")
+        assert len(results) == 1
+        assert any("failed" in e.lower() for e in results[0].errors)
+
+
 class TestFileResult:
     def test_default_values(self):
         r = FileResult(file_id="test")

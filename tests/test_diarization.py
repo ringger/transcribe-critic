@@ -261,6 +261,42 @@ class TestIdentifySpeakers:
         ]
         _identify_speakers(config, data)  # Should not raise
 
+    @patch("transcribe_critic.diarization.llm_call_with_retry")
+    @patch("transcribe_critic.diarization.create_llm_client")
+    def test_retries_on_unparseable_response(self, mock_client, mock_llm, capsys):
+        """When first LLM response is not valid JSON, retries with simpler prompt."""
+        # First call: garbage; second call: valid JSON
+        mock_llm.side_effect = [
+            MagicMock(content=[MagicMock(text="I think SPEAKER_00 is Alice")]),
+            MagicMock(content=[MagicMock(text='{"SPEAKER_00": "Alice", "SPEAKER_01": "Bob"}')]),
+        ]
+        config = SpeechConfig(url="test", output_dir="/tmp", local=False)
+        data = SpeechData()
+        data.transcript_segments = [
+            {"start": 0, "end": 5, "text": "I'm Alice and welcome", "speaker": "SPEAKER_00"},
+            {"start": 5, "end": 10, "text": "Thanks Alice", "speaker": "SPEAKER_01"},
+        ]
+        _identify_speakers(config, data)
+        assert mock_llm.call_count == 2
+        assert data.transcript_segments[0]["speaker"] == "Alice"
+        assert data.transcript_segments[1]["speaker"] == "Bob"
+        out = capsys.readouterr().out
+        assert "retrying" in out.lower()
+
+    @patch("transcribe_critic.diarization.llm_call_with_retry")
+    @patch("transcribe_critic.diarization.create_llm_client")
+    def test_returns_empty_on_total_failure(self, mock_client, mock_llm):
+        """When LLM raises an exception, speakers are left unchanged."""
+        mock_llm.side_effect = Exception("API error")
+        config = SpeechConfig(url="test", output_dir="/tmp", local=False)
+        data = SpeechData()
+        data.transcript_segments = [
+            {"start": 0, "end": 5, "text": "Hello", "speaker": "SPEAKER_00"},
+        ]
+        _identify_speakers(config, data)
+        # Speaker should remain unchanged (no crash)
+        assert data.transcript_segments[0]["speaker"] == "SPEAKER_00"
+
 
 # ---------------------------------------------------------------------------
 # _get_intro_text

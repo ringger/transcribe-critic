@@ -13,7 +13,8 @@ import pytest
 
 from transcribe_critic.shared import (
     SpeechConfig, SpeechData,
-    AUDIO_MP3, WHISPER_MERGED_TXT, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
+    AUDIO_MP3, ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT,
+    WHISPER_MERGED_TXT, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
 )
 
 
@@ -301,3 +302,119 @@ class TestDiarizeToMerge:
 
         out = capsys.readouterr().out
         assert "No audio file" in out
+
+
+# ---------------------------------------------------------------------------
+# Hydrate: new asr_* naming and legacy whisper_* backward compat
+# ---------------------------------------------------------------------------
+
+class TestHydrateNewNaming:
+    def test_hydrate_prefers_asr_over_whisper(self, tmp_path):
+        """When both asr_medium.txt and whisper_medium.txt exist, asr_ wins."""
+        from transcribe_critic.transcriber import _hydrate_data
+
+        config = _make_config(tmp_path)
+        data = SpeechData()
+
+        (tmp_path / "asr_medium.txt").write_text("new naming")
+        (tmp_path / "whisper_medium.txt").write_text("legacy naming")
+
+        _hydrate_data(config, data)
+
+        assert "medium" in data.asr_transcripts
+        assert data.asr_transcripts["medium"]["txt"] == tmp_path / "asr_medium.txt"
+
+    def test_hydrate_discovers_legacy_whisper_files(self, tmp_path):
+        """Legacy whisper_*.txt files are still discovered when no asr_ equivalent."""
+        from transcribe_critic.transcriber import _hydrate_data
+
+        config = _make_config(tmp_path)
+        data = SpeechData()
+
+        (tmp_path / "whisper_small.txt").write_text("legacy")
+
+        _hydrate_data(config, data)
+
+        assert "small" in data.asr_transcripts
+        assert data.asr_transcripts["small"]["txt"] == tmp_path / "whisper_small.txt"
+
+    def test_hydrate_loads_asr_merged(self, tmp_path):
+        """_hydrate_data prefers asr_merged.txt over whisper_merged.txt."""
+        from transcribe_critic.transcriber import _hydrate_data
+
+        config = _make_config(tmp_path)
+        data = SpeechData()
+
+        (tmp_path / "asr_medium.txt").write_text("text")
+        (tmp_path / ASR_MERGED_TXT).write_text("new merged")
+        (tmp_path / LEGACY_WHISPER_MERGED_TXT).write_text("old merged")
+
+        _hydrate_data(config, data)
+
+        assert data.transcript_path == tmp_path / ASR_MERGED_TXT
+
+    def test_hydrate_falls_back_to_legacy_merged(self, tmp_path):
+        """When only whisper_merged.txt exists, it's used as transcript_path."""
+        from transcribe_critic.transcriber import _hydrate_data
+
+        config = _make_config(tmp_path)
+        data = SpeechData()
+
+        (tmp_path / "whisper_medium.txt").write_text("text")
+        (tmp_path / LEGACY_WHISPER_MERGED_TXT).write_text("legacy merged")
+
+        _hydrate_data(config, data)
+
+        assert data.transcript_path == tmp_path / LEGACY_WHISPER_MERGED_TXT
+
+    def test_hydrate_mixed_asr_and_whisper_models(self, tmp_path):
+        """Mix of asr_ and whisper_ files from different models all discovered."""
+        from transcribe_critic.transcriber import _hydrate_data
+
+        config = _make_config(tmp_path)
+        data = SpeechData()
+
+        (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
+        (tmp_path / "whisper_distil-large-v3.txt").write_text("whisper text")
+
+        _hydrate_data(config, data)
+
+        assert "parakeet" in data.asr_transcripts
+        assert "distil-large-v3" in data.asr_transcripts
+
+
+# ---------------------------------------------------------------------------
+# Transcribe → Ensemble: model outputs feed into ensemble
+# ---------------------------------------------------------------------------
+
+class TestTranscribeToEnsemble:
+    @patch("transcribe_critic.transcription._call_and_parse_cluster")
+    @patch("transcribe_critic.transcription.create_llm_client")
+    def test_ensemble_uses_asr_transcripts_from_transcribe(
+        self, mock_client, mock_call, tmp_path
+    ):
+        """Ensemble reads from data.asr_transcripts populated by transcribe step."""
+        from transcribe_critic.transcription import _ensemble_asr_transcripts
+
+        config = _make_config(tmp_path, models=["small", "medium"],
+                              local=False, api_key="test")
+        data = SpeechData(audio_path=tmp_path / AUDIO_MP3)
+        (tmp_path / AUDIO_MP3).write_text("fake")
+
+        # Simulate what transcribe step produces
+        txt_small = tmp_path / "asr_small.txt"
+        txt_medium = tmp_path / "asr_medium.txt"
+        txt_small.write_text("the quick brown cat")
+        txt_medium.write_text("the quick brown fox")
+        json_medium = tmp_path / "asr_medium.json"
+        _make_whisper_json(json_medium)
+
+        data.register_transcript("small", txt_small)
+        data.register_transcript("medium", txt_medium, json_medium)
+
+        mock_call.return_value = (["A"], {})
+        _ensemble_asr_transcripts(config, data)
+
+        # Ensemble should write asr_merged.txt
+        assert (tmp_path / ASR_MERGED_TXT).exists()
+        assert data.transcript_path == tmp_path / ASR_MERGED_TXT

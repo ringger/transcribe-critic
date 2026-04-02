@@ -22,6 +22,8 @@ from transcribe_critic.transcription import (
     _load_transcript_segments,
     _merge_pairwise_diffs,
     _parse_wdiff_diffs,
+    _patch_hf_config,
+    _resolve_whisper_diffs,
     _run_asr_model,
     _run_whisper_model,
     _select_largest_model_json,
@@ -1433,5 +1435,123 @@ class TestEnsureWav:
         cmd = mock_run.call_args[0][0]
         assert "ffmpeg" in cmd
         assert "-ar" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint restoration in _resolve_whisper_diffs
+# ---------------------------------------------------------------------------
+
+class TestResolveWhisperDiffsCheckpoints:
+    """Test checkpoint save/restore in _resolve_whisper_diffs."""
+
+    @patch("transcribe_critic.transcription._call_and_parse_cluster")
+    @patch("transcribe_critic.transcription.create_llm_client")
+    def test_saves_and_restores_checkpoint(self, mock_client, mock_call, tmp_path):
+        """First run saves checkpoints; second run restores from them."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False,
+                              local=False, api_key="test")
+        # Two transcripts that differ — create files on disk so staleness check works
+        base = "the quick brown fox jumps over the lazy dog"
+        alt = "the quick brown cat jumps over the lazy dog"
+        (tmp_path / "whisper_medium.txt").write_text(base)
+        (tmp_path / "whisper_small.txt").write_text(alt)
+        transcripts = {"medium": base, "small": alt}
+
+        # Mock LLM to choose "A" (base) for each diff
+        mock_call.return_value = (["A"], {})
+
+        result1 = _resolve_whisper_diffs(base, transcripts, config)
+
+        # Checkpoint should have been saved
+        ensemble_dir = tmp_path / "ensemble_chunks"
+        checkpoints = list(ensemble_dir.glob("cluster_*.json"))
+        assert len(checkpoints) > 0
+        saved = json.loads(checkpoints[0].read_text())
+        assert "choices" in saved
+
+        # Second run should reuse checkpoints (mock not called again)
+        mock_call.reset_mock()
+        time.sleep(0.05)  # ensure checkpoint is newer than inputs
+        result2 = _resolve_whisper_diffs(base, transcripts, config)
+        mock_call.assert_not_called()
+
+    @patch("transcribe_critic.transcription._call_and_parse_cluster")
+    @patch("transcribe_critic.transcription.create_llm_client")
+    def test_checkpoint_restores_multiway_readings(self, mock_client, mock_call, tmp_path):
+        """Checkpoint with multi-way readings restores correct choice."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False,
+                              local=False, api_key="test")
+        base = "the quick brown fox"
+        (tmp_path / "whisper_large.txt").write_text(base)
+        (tmp_path / "whisper_medium.txt").write_text("the quick brown cat")
+        (tmp_path / "whisper_small.txt").write_text("the quick brown bat")
+        transcripts = {"large": base, "medium": "the quick brown cat", "small": "the quick brown bat"}
+
+        # First call returns choices
+        mock_call.return_value = (["B"], {})
+        _resolve_whisper_diffs(base, transcripts, config)
+
+        # Verify checkpoint exists and run again
+        mock_call.reset_mock()
+        time.sleep(0.05)
+        result = _resolve_whisper_diffs(base, transcripts, config)
+        mock_call.assert_not_called()
+
+
+class TestResolveWhisperDiffsRetry:
+    """Test retry-without-context when all cluster choices fail."""
+
+    @patch("transcribe_critic.transcription._call_and_parse_cluster")
+    @patch("transcribe_critic.transcription.create_llm_client")
+    def test_retries_when_all_choices_none(self, mock_client, mock_call, tmp_path, capsys):
+        """When first call returns all None choices, retries with minimal prompt."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False,
+                              local=False, api_key="test")
+        base = "the quick brown fox"
+        transcripts = {"medium": base, "small": "the quick brown cat"}
+
+        # First call: all None (unresolved); second call: resolved
+        mock_call.side_effect = [
+            ([None], {}),   # first attempt fails
+            (["A"], {}),    # retry succeeds
+        ]
+        _resolve_whisper_diffs(base, transcripts, config)
+        assert mock_call.call_count == 2
+        out = capsys.readouterr().out
+        assert "Retrying" in out
+
+
+# ---------------------------------------------------------------------------
+# _patch_hf_config
+# ---------------------------------------------------------------------------
+
+class TestPatchHfConfig:
+    @patch("transcribe_critic.transcription.json")
+    def test_converts_int_to_float(self, mock_json, tmp_path):
+        """Int values in config are converted to float."""
+        config_file = tmp_path / "config.json"
+        config_data = {
+            "embedding_multiplier": 1,
+            "rms_norm_eps": 1,
+            "rope_theta": 10000,
+            "text_config": {"initializer_range": 2},
+        }
+        config_file.write_text(json.dumps(config_data))
+
+        with patch("transcribe_critic.transcription.json", json):
+            # Use real json, but patch hf_hub_download
+            with patch("huggingface_hub.hf_hub_download", return_value=str(config_file)):
+                _patch_hf_config("test-model")
+
+        result = json.loads(config_file.read_text())
+        assert isinstance(result["embedding_multiplier"], float)
+        assert isinstance(result["rms_norm_eps"], float)
+        assert isinstance(result["rope_theta"], float)
+        assert isinstance(result["text_config"]["initializer_range"], float)
+
+    def test_gracefully_handles_missing_hub(self):
+        """Does not raise when huggingface_hub is not available."""
+        with patch.dict("sys.modules", {"huggingface_hub": None}):
+            _patch_hf_config("nonexistent-model")  # should not raise
 
 

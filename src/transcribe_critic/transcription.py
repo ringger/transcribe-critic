@@ -16,12 +16,11 @@ from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
     ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT,
-    WHISPER_MERGED_TXT,  # deprecated alias, kept for external importers
     COMMON_WORDS, MLX_MODEL_MAP, validate_checkpoint_version,
-    ALL_MODELS, ASR_MODEL_REGISTRY, is_whisper_model, get_model_quality_rank,
+    ALL_MODELS, is_whisper_model, get_model_quality_rank,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
     run_command, _save_json, _print_reusing, _dry_run_skip, _should_skip,
-    check_dependencies, MODEL_SIZES,
+    check_dependencies,
 )
 from transcribe_critic.merge import (
     _normalize_for_comparison, _write_temp_text, _parse_wdiff_tokens,

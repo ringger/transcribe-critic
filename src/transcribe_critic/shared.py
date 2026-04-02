@@ -86,7 +86,7 @@ DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_LOCAL_MODEL = "qwen2.5:14b"
 DEFAULT_LOCAL_VISION_MODEL = "llava"
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/"
-DEFAULT_MODELS = ["distil-large-v3", "parakeet", "qwen3-asr"]
+DEFAULT_MODELS = ["parakeet"]
 # Deprecated — use DEFAULT_MODELS
 DEFAULT_WHISPER_MODELS = [m for m in DEFAULT_MODELS if is_whisper_model(m)]
 DEFAULT_ASR_MODELS = [m for m in DEFAULT_MODELS if not is_whisper_model(m)]

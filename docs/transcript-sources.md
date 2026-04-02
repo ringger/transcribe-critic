@@ -36,9 +36,9 @@ metadata doesn't always make it obvious which type you have.
 
 ## ASR Models
 
-The pipeline runs multiple ASR models from diverse architectures and ensembles
-them via LLM adjudication. The default models are `distil-large-v3`, `parakeet`,
-and `qwen3-asr`. See [ensemble-experiments.md](ensemble-experiments.md) for
+The pipeline supports multiple ASR backends. The default model is `parakeet`
+(best single-model WER at 24.7%). For ensemble mode, use
+`--models distil-large-v3,parakeet,qwen3-asr`. See [ensemble-experiments.md](ensemble-experiments.md) for
 comparative WER data.
 
 ### Model Characteristics

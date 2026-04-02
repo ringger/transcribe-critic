@@ -12,7 +12,7 @@ The approach applies principles from [textual criticism](https://en.wikipedia.or
 
 - **Critical text merging**: Combines 2–3+ transcript sources into the most accurate version using blind, anonymous presentation to an LLM — no source receives preferential treatment
 - **wdiff-based alignment**: Uses longest common subsequence alignment (via `wdiff`) to keep chunks properly aligned across sources of different lengths, replacing naive proportional slicing
-- **Multi-model ASR ensembling**: Runs multiple ASR models from diverse architectures (default: distil-large-v3, parakeet, qwen3-asr) and resolves disagreements via LLM with anonymous A/B/C labels
+- **Multi-model ASR ensembling**: Optionally runs multiple ASR models from diverse architectures and resolves disagreements via LLM with anonymous A/B/C labels (e.g., `--models distil-large-v3,parakeet,qwen3-asr`)
 - **Anti-hallucination**: Whisper runs use `condition_on_previous_text=False` and other flags to prevent cascading hallucination; residual repetition loops are automatically detected and collapsed
 - **External transcript support**: Merges in human-edited transcripts (e.g., from publisher websites) as an additional source
 - **Structured transcript preservation**: When external transcripts have speaker labels and timestamps, the merged output preserves that structure
@@ -133,7 +133,7 @@ transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides --
 # Custom output directory
 transcribe-critic "https://youtube.com/watch?v=..." -o ./my_transcript
 
-# Choose specific ASR models (default: distil-large-v3,parakeet,qwen3-asr)
+# Ensemble multiple models for cross-checking (default: parakeet only)
 transcribe-critic "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet,qwen3-asr
 
 # Use a single model
@@ -373,7 +373,7 @@ The lesson: stronger LLMs are better adjudicators overall, but they are also mor
 
 ### Multi-Model ASR Merging
 
-When using multiple ASR models (default: `distil-large-v3,parakeet,qwen3-asr` via `--models`):
+When using multiple ASR models (e.g., `--models distil-large-v3,parakeet,qwen3-asr`):
 
 1. Runs each model independently (Whisper with anti-hallucination flags; non-Whisper via their native libraries)
 2. Uses `wdiff` to identify specific word-level differences between each non-base model and the base (highest-ranked model by quality)

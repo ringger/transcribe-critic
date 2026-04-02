@@ -30,10 +30,10 @@ Examples:
     # Full pipeline with slide analysis (merging is automatic)
     transcribe-critic "https://youtube.com/watch?v=..." --analyze-slides
 
-    # Ensemble multiple ASR models for better accuracy
+    # Ensemble multiple ASR models (default: parakeet only)
     transcribe-critic "https://youtube.com/watch?v=..." --models distil-large-v3,parakeet,qwen3-asr
 
-    # Run without any LLM (ASR only, free)
+    # Run without any LLM (default — single model needs no adjudication)
     transcribe-critic "https://youtube.com/watch?v=..." --no-llm
 
     # Use Anthropic Claude API instead of local Ollama

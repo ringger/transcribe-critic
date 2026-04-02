@@ -312,12 +312,12 @@ class TestDetectHypothesisFormat:
         (tmp_path / "transcript_merged.txt").write_text("Hello world")
         assert detect_hypothesis_format(tmp_path) == "plain_merged"
 
-    def test_whisper_merged(self, tmp_path):
-        (tmp_path / "whisper_merged.txt").write_text("Hello world")
+    def test_asr_merged(self, tmp_path):
+        (tmp_path / "asr_merged.txt").write_text("Hello world")
         assert detect_hypothesis_format(tmp_path) == "whisper"
 
-    def test_whisper_model(self, tmp_path):
-        (tmp_path / "whisper_medium.txt").write_text("Hello world")
+    def test_asr_model(self, tmp_path):
+        (tmp_path / "asr_medium.txt").write_text("Hello world")
         assert detect_hypothesis_format(tmp_path) == "whisper"
 
     def test_none(self, tmp_path):
@@ -337,8 +337,8 @@ class TestHypothesisToStm:
         result = hypothesis_to_stm(tmp_path, "test")
         assert "Kevin_Roose" in result
 
-    def test_auto_whisper(self, tmp_path):
-        (tmp_path / "whisper_medium.txt").write_text("Hello world")
+    def test_auto_asr(self, tmp_path):
+        (tmp_path / "asr_medium.txt").write_text("Hello world")
         result = hypothesis_to_stm(tmp_path, "test")
         assert "unknown" in result
         assert "Hello world" in result

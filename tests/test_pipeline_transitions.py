@@ -13,8 +13,7 @@ import pytest
 
 from transcribe_critic.shared import (
     SpeechConfig, SpeechData,
-    AUDIO_MP3, ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT,
-    WHISPER_MERGED_TXT, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
+    AUDIO_MP3, ASR_MERGED_TXT, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
 )
 
 
@@ -58,23 +57,23 @@ class TestEnsembleToDiarize:
     ):
         """After ensemble, transcript_segments should be loaded from the
         largest model's JSON so diarization can use them."""
-        from transcribe_critic.transcription import _ensemble_whisper_transcripts
+        from transcribe_critic.transcription import _ensemble_asr_transcripts
 
-        config = _make_config(tmp_path, whisper_models=["small", "medium"])
+        config = _make_config(tmp_path, models=["small", "medium"])
         data = SpeechData(audio_path=tmp_path / AUDIO_MP3)
 
         # Create two model transcripts on disk
-        small_txt = tmp_path / "whisper_small.txt"
-        medium_txt = tmp_path / "whisper_medium.txt"
+        small_txt = tmp_path / "asr_small.txt"
+        medium_txt = tmp_path / "asr_medium.txt"
         small_txt.write_text("Hello world this is a test transcript")
         medium_txt.write_text("Hello world this is a test transcript")
 
-        small_json = tmp_path / "whisper_small.json"
-        medium_json = tmp_path / "whisper_medium.json"
+        small_json = tmp_path / "asr_small.json"
+        medium_json = tmp_path / "asr_medium.json"
         _make_whisper_json(small_json)
         segs = _make_whisper_json(medium_json)
 
-        data.whisper_transcripts = {
+        data.asr_transcripts = {
             "small": {"txt": small_txt, "json": small_json},
             "medium": {"txt": medium_txt, "json": medium_json},
         }
@@ -83,7 +82,7 @@ class TestEnsembleToDiarize:
 
         # wdiff finds no diffs (identical transcripts) → no LLM calls needed
         # But merged file still gets written
-        _ensemble_whisper_transcripts(config, data)
+        _ensemble_asr_transcripts(config, data)
 
         # Key assertions: segments must be loaded for diarizer
         assert data.transcript_segments is not None
@@ -105,24 +104,22 @@ class TestEnsembleToDiarize:
 
 class TestHydrateData:
     def test_hydrate_loads_ensemble_and_segments(self, tmp_path):
-        """_hydrate_data should load whisper_merged.txt as transcript_path
+        """_hydrate_data should load asr_merged.txt as transcript_path
         and populate transcript_segments from the largest model's JSON."""
         from transcribe_critic.transcriber import _hydrate_data
 
         config = _make_config(tmp_path)
         data = SpeechData()
 
-        # Create files on disk
-        (tmp_path / WHISPER_MERGED_TXT).write_text("merged transcript text")
-        (tmp_path / "whisper_medium.txt").write_text("medium transcript text")
-        _make_whisper_json(tmp_path / "whisper_medium.json", num_segments=4)
+        (tmp_path / ASR_MERGED_TXT).write_text("merged transcript text")
+        (tmp_path / "asr_medium.txt").write_text("medium transcript text")
+        _make_whisper_json(tmp_path / "asr_medium.json", num_segments=4)
 
         _hydrate_data(config, data)
 
-        assert data.transcript_path == tmp_path / WHISPER_MERGED_TXT
-        assert data.transcript_json_path == tmp_path / "whisper_medium.json"
-        assert "medium" in data.whisper_transcripts
-        # Segments must be loaded so diarize can use them
+        assert data.transcript_path == tmp_path / ASR_MERGED_TXT
+        assert data.transcript_json_path == tmp_path / "asr_medium.json"
+        assert "medium" in data.asr_transcripts
         assert len(data.transcript_segments) == 4
         assert "words" in data.transcript_segments[0]
 
@@ -132,7 +129,7 @@ class TestHydrateData:
         config = _make_config(tmp_path)
         data = SpeechData()
 
-        (tmp_path / "whisper_medium.txt").write_text("text")
+        (tmp_path / "asr_medium.txt").write_text("text")
         (tmp_path / DIARIZED_TXT).write_text("[0:00:00] Speaker 1: Hello")
 
         _hydrate_data(config, data)
@@ -145,7 +142,7 @@ class TestHydrateData:
         config = _make_config(tmp_path)
         data = SpeechData()
 
-        (tmp_path / "whisper_medium.txt").write_text("text")
+        (tmp_path / "asr_medium.txt").write_text("text")
         (tmp_path / TRANSCRIPT_MERGED_TXT).write_text("merged text")
 
         _hydrate_data(config, data)
@@ -153,20 +150,18 @@ class TestHydrateData:
         assert data.merged_transcript_path == tmp_path / TRANSCRIPT_MERGED_TXT
 
     def test_hydrate_falls_back_to_largest_model(self, tmp_path):
-        """Without whisper_merged.txt, should use the largest available model."""
+        """Without asr_merged.txt, should use the largest available model."""
         from transcribe_critic.transcriber import _hydrate_data
 
         config = _make_config(tmp_path)
         data = SpeechData()
 
-        # Create small and medium (no merged)
-        (tmp_path / "whisper_small.txt").write_text("small")
-        (tmp_path / "whisper_medium.txt").write_text("medium")
+        (tmp_path / "asr_small.txt").write_text("small")
+        (tmp_path / "asr_medium.txt").write_text("medium")
 
         _hydrate_data(config, data)
 
-        # medium is larger than small in MODEL_SIZES order
-        assert data.transcript_path == tmp_path / "whisper_medium.txt"
+        assert data.transcript_path == tmp_path / "asr_medium.txt"
 
     def test_hydrate_audio_path(self, tmp_path):
         from transcribe_critic.transcriber import _hydrate_data
@@ -179,6 +174,18 @@ class TestHydrateData:
         _hydrate_data(config, data)
 
         assert data.audio_path == tmp_path / AUDIO_MP3
+
+    def test_hydrate_rejects_legacy_whisper_files(self, tmp_path):
+        """_hydrate_data should error when legacy whisper_*.txt files are found."""
+        from transcribe_critic.transcriber import _hydrate_data
+
+        config = _make_config(tmp_path)
+        data = SpeechData()
+
+        (tmp_path / "whisper_medium.txt").write_text("legacy")
+
+        with pytest.raises(SystemExit):
+            _hydrate_data(config, data)
 
 
 # ---------------------------------------------------------------------------
@@ -237,9 +244,9 @@ class TestMergeToMarkdown:
         data.title = "Test"
 
         # Create both transcript files
-        whisper = tmp_path / "whisper_medium.txt"
-        whisper.write_text("whisper only content")
-        data.transcript_path = whisper
+        asr = tmp_path / "asr_medium.txt"
+        asr.write_text("asr only content")
+        data.transcript_path = asr
 
         merged = tmp_path / TRANSCRIPT_MERGED_TXT
         merged.write_text("merged content with extra sources")
@@ -249,7 +256,7 @@ class TestMergeToMarkdown:
 
         md_text = (tmp_path / "transcript.md").read_text()
         assert "merged content with extra sources" in md_text
-        assert "whisper only content" not in md_text
+        assert "asr only content" not in md_text
 
     def test_markdown_falls_back_to_whisper(self, tmp_path):
         from transcribe_critic.output import generate_markdown
@@ -258,15 +265,15 @@ class TestMergeToMarkdown:
         data = SpeechData()
         data.title = "Test"
 
-        whisper = tmp_path / "whisper_medium.txt"
-        whisper.write_text("whisper fallback content")
-        data.transcript_path = whisper
+        asr = tmp_path / "asr_medium.txt"
+        asr.write_text("asr fallback content")
+        data.transcript_path = asr
         # No merged_transcript_path
 
         generate_markdown(config, data)
 
         md_text = (tmp_path / "transcript.md").read_text()
-        assert "whisper fallback content" in md_text
+        assert "asr fallback content" in md_text
 
 
 # ---------------------------------------------------------------------------
@@ -305,82 +312,22 @@ class TestDiarizeToMerge:
 
 
 # ---------------------------------------------------------------------------
-# Hydrate: new asr_* naming and legacy whisper_* backward compat
+# Hydrate: legacy whisper_* files are rejected
 # ---------------------------------------------------------------------------
 
-class TestHydrateNewNaming:
-    def test_hydrate_prefers_asr_over_whisper(self, tmp_path):
-        """When both asr_medium.txt and whisper_medium.txt exist, asr_ wins."""
-        from transcribe_critic.transcriber import _hydrate_data
-
-        config = _make_config(tmp_path)
-        data = SpeechData()
-
-        (tmp_path / "asr_medium.txt").write_text("new naming")
-        (tmp_path / "whisper_medium.txt").write_text("legacy naming")
-
-        _hydrate_data(config, data)
-
-        assert "medium" in data.asr_transcripts
-        assert data.asr_transcripts["medium"]["txt"] == tmp_path / "asr_medium.txt"
-
-    def test_hydrate_discovers_legacy_whisper_files(self, tmp_path):
-        """Legacy whisper_*.txt files are still discovered when no asr_ equivalent."""
-        from transcribe_critic.transcriber import _hydrate_data
-
-        config = _make_config(tmp_path)
-        data = SpeechData()
-
-        (tmp_path / "whisper_small.txt").write_text("legacy")
-
-        _hydrate_data(config, data)
-
-        assert "small" in data.asr_transcripts
-        assert data.asr_transcripts["small"]["txt"] == tmp_path / "whisper_small.txt"
-
-    def test_hydrate_loads_asr_merged(self, tmp_path):
-        """_hydrate_data prefers asr_merged.txt over whisper_merged.txt."""
-        from transcribe_critic.transcriber import _hydrate_data
-
-        config = _make_config(tmp_path)
-        data = SpeechData()
-
-        (tmp_path / "asr_medium.txt").write_text("text")
-        (tmp_path / ASR_MERGED_TXT).write_text("new merged")
-        (tmp_path / LEGACY_WHISPER_MERGED_TXT).write_text("old merged")
-
-        _hydrate_data(config, data)
-
-        assert data.transcript_path == tmp_path / ASR_MERGED_TXT
-
-    def test_hydrate_falls_back_to_legacy_merged(self, tmp_path):
-        """When only whisper_merged.txt exists, it's used as transcript_path."""
-        from transcribe_critic.transcriber import _hydrate_data
-
-        config = _make_config(tmp_path)
-        data = SpeechData()
-
-        (tmp_path / "whisper_medium.txt").write_text("text")
-        (tmp_path / LEGACY_WHISPER_MERGED_TXT).write_text("legacy merged")
-
-        _hydrate_data(config, data)
-
-        assert data.transcript_path == tmp_path / LEGACY_WHISPER_MERGED_TXT
-
-    def test_hydrate_mixed_asr_and_whisper_models(self, tmp_path):
-        """Mix of asr_ and whisper_ files from different models all discovered."""
+class TestHydrateLegacyRejection:
+    def test_hydrate_rejects_mixed_legacy_and_new(self, tmp_path):
+        """Even with asr_ files present, whisper_* triggers error."""
         from transcribe_critic.transcriber import _hydrate_data
 
         config = _make_config(tmp_path)
         data = SpeechData()
 
         (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
-        (tmp_path / "whisper_distil-large-v3.txt").write_text("whisper text")
+        (tmp_path / "whisper_distil-large-v3.txt").write_text("legacy")
 
-        _hydrate_data(config, data)
-
-        assert "parakeet" in data.asr_transcripts
-        assert "distil-large-v3" in data.asr_transcripts
+        with pytest.raises(SystemExit):
+            _hydrate_data(config, data)
 
 
 # ---------------------------------------------------------------------------

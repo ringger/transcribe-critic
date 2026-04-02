@@ -15,7 +15,7 @@ from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
-    ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT,
+    ASR_MERGED_TXT,
     COMMON_WORDS, MLX_MODEL_MAP, validate_checkpoint_version,
     ALL_MODELS, is_whisper_model, get_model_quality_rank,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
@@ -622,10 +622,10 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
     validate_checkpoint_version(ensemble_dir, ENSEMBLE_CHECKPOINT_VERSION, "cluster_*.json")
 
     # Determine source paths for staleness checks
-    whisper_inputs = [
-        config.output_dir / f"whisper_{m}.txt"
+    asr_inputs = [
+        config.output_dir / f"asr_{m}.txt"
         for m in all_transcripts
-        if (config.output_dir / f"whisper_{m}.txt").exists()
+        if (config.output_dir / f"asr_{m}.txt").exists()
     ]
 
     # Collect all resolutions: list of (diff, chosen_text) pairs
@@ -636,7 +636,7 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
         checkpoint_path = ensemble_dir / f"cluster_{cluster_idx:03d}.json"
 
         # Check for reusable checkpoint
-        if whisper_inputs and is_up_to_date(checkpoint_path, *whisper_inputs):
+        if asr_inputs and is_up_to_date(checkpoint_path, *asr_inputs):
             with open(checkpoint_path, 'r') as f:
                 saved = json.load(f)
             # Restore resolutions from checkpoint
@@ -816,27 +816,14 @@ def transcribe_audio(config: SpeechConfig, data: SpeechData) -> None:
 
 def _run_whisper_model(config: SpeechConfig, data: SpeechData, model: str, deps: dict) -> None:
     """Run a single Whisper model and save output."""
-    # Create model-specific output names (unified asr_ prefix)
     txt_path = config.output_dir / f"asr_{model}.txt"
     json_path = config.output_dir / f"asr_{model}.json"
 
-    # Also check legacy whisper_ paths for skip-existing logic
-    legacy_txt = config.output_dir / f"whisper_{model}.txt"
-    legacy_json = config.output_dir / f"whisper_{model}.json"
-    if not txt_path.exists() and legacy_txt.exists():
-        # Legacy file present, use it for skip check
-        txt_path = legacy_txt
-        json_path = legacy_json if legacy_json.exists() else json_path
-
-    # Check if up to date (output newer than audio input)
     if _should_skip(config, txt_path, f"transcribe with Whisper {model}", data.audio_path):
         if txt_path.exists():
             data.register_transcript(model, txt_path, json_path)
         return
 
-    # New runs always write to asr_ prefix
-    txt_path = config.output_dir / f"asr_{model}.txt"
-    json_path = config.output_dir / f"asr_{model}.json"
     print(f"  Running Whisper {model}...")
 
     if deps["mlx_whisper"]:
@@ -1136,9 +1123,6 @@ def _ensemble_asr_transcripts(config: SpeechConfig, data: SpeechData) -> None:
     # Check for existing merged file (new or legacy name)
     if data.audio_path:
         merged_path = config.output_dir / ASR_MERGED_TXT
-        legacy_merged = config.output_dir / LEGACY_WHISPER_MERGED_TXT
-        if not merged_path.exists() and legacy_merged.exists():
-            merged_path = legacy_merged  # use legacy for skip check
         asr_inputs = [data.asr_transcripts[m]["txt"] for m in models
                       if data.asr_transcripts[m].get("txt")]
         action = f"adjudicate {len(models)} ASR transcripts ({', '.join(models)})"
@@ -1195,10 +1179,6 @@ def _ensemble_asr_transcripts(config: SpeechConfig, data: SpeechData) -> None:
 
     data.transcript_json_path = _select_largest_model_json(data)
     _load_transcript_segments(data)
-
-
-# Deprecated alias
-_ensemble_whisper_transcripts = _ensemble_asr_transcripts
 
 
 def _clean_llm_output(text: str) -> str:

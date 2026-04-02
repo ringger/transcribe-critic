@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "transcribe-critic"
-version = "1.4.1"
+version = "1.5.0"
 description = "Multi-source speech transcription with LLM-based adjudication inspired by textual criticism"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-keywords = ["transcription", "whisper", "speech", "llm", "diarization"]
+keywords = ["transcription", "asr", "speech", "whisper", "parakeet", "llm", "diarization"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",

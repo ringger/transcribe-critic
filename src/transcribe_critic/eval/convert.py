@@ -13,8 +13,7 @@ import re
 from pathlib import Path
 
 from transcribe_critic.shared import (
-    ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT, WHISPER_MERGED_TXT,
-    DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, DIARIZATION_JSON,
+    ASR_MERGED_TXT, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, DIARIZATION_JSON,
 )
 
 
@@ -232,14 +231,12 @@ def detect_hypothesis_format(output_dir: Path) -> str:
             return "structured_merged"
         return "plain_merged"
 
-    # Check for ensemble-merged (new or legacy name)
+    # Check for ensemble-merged
     if (output_dir / ASR_MERGED_TXT).exists():
-        return "whisper"
-    if (output_dir / LEGACY_WHISPER_MERGED_TXT).exists():
         return "whisper"
 
     # Fall back to any ASR model output
-    skip = {DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT}
+    skip = {DIARIZED_TXT, TRANSCRIPT_MERGED_TXT, ASR_MERGED_TXT}
     for txt in sorted(output_dir.glob("*.txt")):
         if txt.name not in skip:
             return "whisper"
@@ -283,16 +280,13 @@ def hypothesis_to_stm(output_dir: Path, file_id: str, hypothesis: str = "auto") 
     elif fmt == "plain_merged":
         return plain_text_to_stm(output_dir / TRANSCRIPT_MERGED_TXT, file_id)
     elif fmt == "whisper":
-        # Prefer merged (new then legacy), then any asr_*.txt or whisper_*.txt
-        for name in (ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT):
-            p = output_dir / name
-            if p.exists():
+        # Prefer merged, then any individual model output
+        merged = output_dir / ASR_MERGED_TXT
+        if merged.exists():
+            return plain_text_to_stm(merged, file_id)
+        for p in sorted(output_dir.glob("asr_*.txt")):
+            if p.name != ASR_MERGED_TXT:
                 return plain_text_to_stm(p, file_id)
-        # Fall back to any individual model output
-        for pattern in ("asr_*.txt", "whisper_*.txt"):
-            for p in sorted(output_dir.glob(pattern)):
-                if p.name not in (ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT):
-                    return plain_text_to_stm(p, file_id)
         raise FileNotFoundError(f"No ASR output found in {output_dir}")
     else:
         raise FileNotFoundError(f"No hypothesis output found in {output_dir}")

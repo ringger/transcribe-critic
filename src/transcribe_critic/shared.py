@@ -87,9 +87,6 @@ DEFAULT_LOCAL_MODEL = "qwen2.5:14b"
 DEFAULT_LOCAL_VISION_MODEL = "llava"
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/"
 DEFAULT_MODELS = ["parakeet"]
-# Deprecated — use DEFAULT_MODELS
-DEFAULT_WHISPER_MODELS = [m for m in DEFAULT_MODELS if is_whisper_model(m)]
-DEFAULT_ASR_MODELS = [m for m in DEFAULT_MODELS if not is_whisper_model(m)]
 
 # Common/stop words for filtering trivial diffs in ensembling and merging
 COMMON_WORDS = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
@@ -106,10 +103,7 @@ class SpeechConfig:
     """Configuration for speech transcription pipeline."""
     url: str
     output_dir: Path
-    models: Optional[list] = None  # All ASR models to run (None = use defaults or legacy fields)
-    # Deprecated — use `models` instead
-    whisper_models: Optional[list] = None
-    asr_models: Optional[list] = None
+    models: Optional[list] = None  # All ASR models to run (None = use defaults)
     scene_threshold: float = 0.1
     analyze_slides: bool = False
     merge_sources: bool = True  # Merge YouTube captions with Whisper (default: on)
@@ -154,21 +148,8 @@ class SpeechConfig:
     summary_api_key: Optional[str] = None  # None = inherit from api_key
 
     def __post_init__(self):
-        # Resolve which models to use:
-        # 1. `models` explicitly set → use it.
-        # 2. Deprecated whisper_models/asr_models set → combine them.
-        # 3. Nothing set → DEFAULT_MODELS.
-        if self.models is not None:
-            pass  # caller set models explicitly
-        elif self.whisper_models is not None or self.asr_models is not None:
-            self.models = (self.whisper_models or []) + (self.asr_models or [])
-        else:
+        if self.models is None:
             self.models = list(DEFAULT_MODELS)
-        # Always keep deprecated fields in sync (for code that still reads them)
-        if self.whisper_models is None:
-            self.whisper_models = [m for m in self.models if is_whisper_model(m)]
-        if self.asr_models is None:
-            self.asr_models = [m for m in self.models if not is_whisper_model(m)]
 
 
 def resolve_stage_config(
@@ -207,8 +188,6 @@ AUDIO_WAV = "audio.wav"
 METADATA_JSON = "metadata.json"
 CAPTIONS_VTT = "captions.en.vtt"
 ASR_MERGED_TXT = "asr_merged.txt"
-LEGACY_WHISPER_MERGED_TXT = "whisper_merged.txt"
-WHISPER_MERGED_TXT = LEGACY_WHISPER_MERGED_TXT  # Deprecated alias
 DIARIZATION_JSON = "diarization.json"
 DIARIZED_TXT = "diarized.txt"
 TRANSCRIPT_MERGED_TXT = "transcript_merged.txt"
@@ -229,15 +208,6 @@ class SpeechData:
     transcript_path: Optional[Path] = None  # Primary transcript (or asr_merged)
     transcript_json_path: Optional[Path] = None  # JSON with timestamps
     asr_transcripts: dict = field(default_factory=dict)  # {model: {"txt": Path, "json": Path}}
-
-    @property
-    def whisper_transcripts(self) -> dict:
-        """Deprecated alias for asr_transcripts."""
-        return self.asr_transcripts
-
-    @whisper_transcripts.setter
-    def whisper_transcripts(self, value: dict):
-        self.asr_transcripts = value
 
     def register_transcript(self, model: str, txt_path: Path, json_path: Path = None) -> None:
         """Register a transcript file pair for a model."""
@@ -265,31 +235,23 @@ def _is_url(s: str) -> bool:
 
 
 def discover_transcript_files(directory: Path) -> list[tuple[str, Path, str]]:
-    """Discover ASR transcript .txt files (new asr_* and legacy whisper_* naming).
+    """Discover ASR transcript .txt files (asr_*.txt naming).
 
-    Returns list of (model_name, txt_path, prefix) tuples where prefix is
-    'asr' or 'whisper'. New asr_* files take priority over legacy whisper_*.
+    Returns list of (model_name, txt_path, prefix) tuples.
     Merged files are excluded.
     """
     results = []
-    seen_models = set()
-
-    # New naming first
     for txt in sorted(directory.glob("asr_*.txt")):
         model = txt.stem.removeprefix("asr_")
         if model.startswith("merged"):
             continue
         results.append((model, txt, "asr"))
-        seen_models.add(model)
-
-    # Legacy naming (skip if already found)
-    for txt in sorted(directory.glob("whisper_*.txt")):
-        model = txt.stem.removeprefix("whisper_")
-        if "merged" in model or model in seen_models:
-            continue
-        results.append((model, txt, "whisper"))
-
     return results
+
+
+def has_legacy_whisper_files(directory: Path) -> bool:
+    """Check if a directory contains legacy whisper_*.txt files."""
+    return any(directory.glob("whisper_*.txt"))
 
 
 def validate_checkpoint_version(checkpoint_dir: Path, version: str,

@@ -998,11 +998,15 @@ class TestCheckDependencies:
         assert "mlx_audio" in deps
 
 
-class TestSpeechConfigASR:
-    def test_asr_models_defaults_to_registry(self, tmp_path):
+class TestSpeechConfigModels:
+    def test_models_defaults_to_parakeet(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path)
-        assert config.asr_models == ["parakeet"]
+        assert config.models == ["parakeet"]
 
-    def test_asr_models_can_be_set(self, tmp_path):
-        config = SpeechConfig(url="x", output_dir=tmp_path, asr_models=["parakeet"])
-        assert config.asr_models == ["parakeet"]
+    def test_models_can_be_set(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path, models=["distil-large-v3", "parakeet"])
+        assert config.models == ["distil-large-v3", "parakeet"]
+
+    def test_empty_models_stays_empty(self, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path, models=[])
+        assert config.models == []

@@ -67,20 +67,20 @@ class TestRunMeeTevalDer:
 
 
 class TestDiscoverHypotheses:
-    def test_finds_whisper_models(self, tmp_path):
-        (tmp_path / "whisper_medium.txt").write_text("hello")
-        (tmp_path / "whisper_large.txt").write_text("hello")
+    def test_finds_asr_models(self, tmp_path):
+        (tmp_path / "asr_medium.txt").write_text("hello")
+        (tmp_path / "asr_large.txt").write_text("hello")
         result = _discover_hypotheses(tmp_path)
         names = [name for name, _ in result]
-        assert "whisper_medium" in names
-        assert "whisper_large" in names
+        assert "asr_medium" in names
+        assert "asr_large" in names
 
     def test_finds_merged_outputs(self, tmp_path):
-        (tmp_path / "whisper_merged.txt").write_text("hello")
+        (tmp_path / "asr_merged.txt").write_text("hello")
         (tmp_path / "transcript_merged.txt").write_text("hello")
         result = _discover_hypotheses(tmp_path)
         names = [name for name, _ in result]
-        assert "whisper_merged" in names
+        assert "asr_merged" in names
         assert "transcript_merged" in names
 
     def test_empty_dir(self, tmp_path):

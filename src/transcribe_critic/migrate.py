@@ -8,9 +8,10 @@ import argparse
 import sys
 from pathlib import Path
 
-from transcribe_critic.shared import (
-    LEGACY_WHISPER_MERGED_TXT, ASR_MERGED_TXT, discover_transcript_files,
-)
+from transcribe_critic.shared import ASR_MERGED_TXT
+
+# Legacy filename constant — only needed by this migration tool
+LEGACY_WHISPER_MERGED_TXT = "whisper_merged.txt"
 
 
 def _plan_rename(old: Path, new: Path, renames: list) -> None:
@@ -30,9 +31,10 @@ def migrate_directory(directory: Path, *, dry_run: bool = False) -> list[tuple[P
     renames = []
 
     # Rename whisper_{model}.txt/.json → asr_{model}.txt/.json
-    for model, txt, prefix in discover_transcript_files(directory):
-        if prefix != "whisper":
-            continue  # already asr_*, nothing to migrate
+    for txt in sorted(directory.glob("whisper_*.txt")):
+        model = txt.stem.removeprefix("whisper_")
+        if "merged" in model:
+            continue  # handled separately
         _plan_rename(txt, directory / f"asr_{model}.txt", renames)
         legacy_json = directory / f"whisper_{model}.json"
         if legacy_json.exists():

@@ -86,7 +86,7 @@ class TestStripStructuredHeaders:
 
 def _make_test_artefacts(tmp_path):
     """Create a minimal set of artefacts for testing stage skip/run logic."""
-    whisper = tmp_path / "whisper_merged.txt"
+    whisper = tmp_path / "asr_merged.txt"
     whisper.write_text("whisper transcript words " * 200)
     captions_vtt = tmp_path / "captions.en.vtt"
     captions_vtt.write_text(
@@ -217,7 +217,7 @@ class TestEstimateApiCost:
 
     def test_merge_only(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path,
-                              analyze_slides=False, whisper_models=["medium"])
+                              analyze_slides=False, models=["medium"])
         costs = estimate_api_cost(config, transcript_words=6000)
         assert costs["merge_sources"] > 0
         assert costs["analyze_slides"] == 0.0
@@ -228,7 +228,7 @@ class TestEstimateApiCost:
     def test_slides_only(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path,
                               analyze_slides=True, merge_sources=False,
-                              whisper_models=["medium"])
+                              models=["medium"])
         costs = estimate_api_cost(config, num_slides=10)
         assert costs["analyze_slides"] == pytest.approx(0.20)
         assert costs["merge_sources"] == 0.0
@@ -236,21 +236,21 @@ class TestEstimateApiCost:
 
     def test_ensemble_requires_multiple_models(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path,
-                              merge_sources=False, whisper_models=["medium"])
+                              merge_sources=False, models=["medium"])
         costs = estimate_api_cost(config)
         assert costs["ensemble_whisper"] == 0.0
 
         config2 = SpeechConfig(url="x", output_dir=tmp_path,
                                merge_sources=False,
-                               whisper_models=["small", "medium"])
+                               models=["small", "medium"])
         costs2 = estimate_api_cost(config2)
         assert costs2["ensemble_whisper"] > 0
 
     def test_external_transcript_adds_source(self, tmp_path):
         config2 = SpeechConfig(url="x", output_dir=tmp_path,
-                               whisper_models=["medium"])
+                               models=["medium"])
         config3 = SpeechConfig(url="x", output_dir=tmp_path,
-                               whisper_models=["medium"],
+                               models=["medium"],
                                external_transcript="http://example.com")
         cost2 = estimate_api_cost(config2, transcript_words=10000)
         cost3 = estimate_api_cost(config3, transcript_words=10000)
@@ -260,7 +260,7 @@ class TestEstimateApiCost:
     def test_total_is_sum_of_parts(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path,
                               analyze_slides=True,
-                              whisper_models=["small", "medium"])
+                              models=["small", "medium"])
         costs = estimate_api_cost(config, num_slides=20, transcript_words=5000)
         expected = costs["analyze_slides"] + costs["merge_sources"] + costs["ensemble_whisper"]
         assert costs["total"] == pytest.approx(expected)
@@ -268,10 +268,10 @@ class TestEstimateApiCost:
     def test_opus_costs_more_than_sonnet(self, tmp_path):
         sonnet = SpeechConfig(url="x", output_dir=tmp_path,
                               claude_model="claude-sonnet-4-20250514",
-                              whisper_models=["medium"])
+                              models=["medium"])
         opus = SpeechConfig(url="x", output_dir=tmp_path,
                             claude_model="claude-opus-4-20250514",
-                            whisper_models=["medium"])
+                            models=["medium"])
         cost_s = estimate_api_cost(sonnet, transcript_words=5000)
         cost_o = estimate_api_cost(opus, transcript_words=5000)
         assert cost_o["merge_sources"] > cost_s["merge_sources"]
@@ -279,10 +279,10 @@ class TestEstimateApiCost:
     def test_haiku_costs_less_than_sonnet(self, tmp_path):
         sonnet = SpeechConfig(url="x", output_dir=tmp_path,
                               claude_model="claude-sonnet-4-20250514",
-                              whisper_models=["medium"])
+                              models=["medium"])
         haiku = SpeechConfig(url="x", output_dir=tmp_path,
                              claude_model="claude-haiku-4-20250514",
-                             whisper_models=["medium"])
+                             models=["medium"])
         cost_s = estimate_api_cost(sonnet, transcript_words=5000)
         cost_h = estimate_api_cost(haiku, transcript_words=5000)
         assert cost_h["merge_sources"] < cost_s["merge_sources"]
@@ -433,7 +433,7 @@ class TestDiarizedSkeletonRouting:
 
     def _make_diarized_artefacts(self, tmp_path, *, has_external=False, has_captions=False):
         """Create artefacts for diarized skeleton routing tests."""
-        whisper = tmp_path / "whisper_merged.txt"
+        whisper = tmp_path / "asr_merged.txt"
         whisper.write_text("Hello world this is a test transcript " * 30)
 
         diarized = tmp_path / "diarized.txt"
@@ -576,54 +576,53 @@ class TestHydrateData:
         _hydrate_data(config, data)
         assert data.audio_path == tmp_path / "audio.mp3"
 
-    def test_finds_whisper_transcripts(self, tmp_path):
-        (tmp_path / "whisper_small.txt").write_text("small text")
-        (tmp_path / "whisper_small.json").write_text("{}")
-        (tmp_path / "whisper_medium.txt").write_text("medium text")
+    def test_finds_asr_transcripts(self, tmp_path):
+        (tmp_path / "asr_small.txt").write_text("small text")
+        (tmp_path / "asr_small.json").write_text("{}")
+        (tmp_path / "asr_medium.txt").write_text("medium text")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        assert "small" in data.whisper_transcripts
-        assert "medium" in data.whisper_transcripts
-        assert data.whisper_transcripts["small"]["txt"] == tmp_path / "whisper_small.txt"
-        assert data.whisper_transcripts["small"]["json"] == tmp_path / "whisper_small.json"
-        assert data.whisper_transcripts["medium"]["json"] is None
+        assert "small" in data.asr_transcripts
+        assert "medium" in data.asr_transcripts
+        assert data.asr_transcripts["small"]["txt"] == tmp_path / "asr_small.txt"
+        assert data.asr_transcripts["small"]["json"] == tmp_path / "asr_small.json"
+        assert data.asr_transcripts["medium"]["json"] is None
 
-    def test_ignores_whisper_merged(self, tmp_path):
-        (tmp_path / "whisper_merged.txt").write_text("merged text")
+    def test_ignores_asr_merged_in_transcripts(self, tmp_path):
+        (tmp_path / "asr_merged.txt").write_text("merged text")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        assert "merged" not in data.whisper_transcripts
+        assert "merged" not in data.asr_transcripts
 
-    def test_ignores_whisper_merged_variants(self, tmp_path):
-        """Backup files like whisper_merged_7b.txt should not be treated as model transcripts."""
-        (tmp_path / "whisper_small.txt").write_text("small text")
-        (tmp_path / "whisper_medium.txt").write_text("medium text")
-        (tmp_path / "whisper_merged.txt").write_text("merged text")
-        (tmp_path / "whisper_merged_7b.txt").write_text("old merged")
-        (tmp_path / "whisper_merged_14b_buggy.txt").write_text("bad merged")
+    def test_ignores_asr_merged_variants(self, tmp_path):
+        """Files like asr_merged_7b.txt should not be treated as model transcripts."""
+        (tmp_path / "asr_small.txt").write_text("small text")
+        (tmp_path / "asr_medium.txt").write_text("medium text")
+        (tmp_path / "asr_merged.txt").write_text("merged text")
+        (tmp_path / "asr_merged_7b.txt").write_text("old merged")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        assert sorted(data.whisper_transcripts.keys()) == ["medium", "small"]
+        assert sorted(data.asr_transcripts.keys()) == ["medium", "small"]
 
-    def test_finds_whisper_merged_as_transcript(self, tmp_path):
-        (tmp_path / "whisper_merged.txt").write_text("merged text")
-        (tmp_path / "whisper_small.txt").write_text("small text")
+    def test_finds_asr_merged_as_transcript(self, tmp_path):
+        (tmp_path / "asr_merged.txt").write_text("merged text")
+        (tmp_path / "asr_small.txt").write_text("small text")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        assert data.transcript_path == tmp_path / "whisper_merged.txt"
+        assert data.transcript_path == tmp_path / "asr_merged.txt"
 
     def test_falls_back_to_largest_model(self, tmp_path):
-        (tmp_path / "whisper_small.txt").write_text("small text")
-        (tmp_path / "whisper_medium.txt").write_text("medium text")
+        (tmp_path / "asr_small.txt").write_text("small text")
+        (tmp_path / "asr_medium.txt").write_text("medium text")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
         # medium is larger than small, so it becomes transcript_path
-        assert data.transcript_path == tmp_path / "whisper_medium.txt"
+        assert data.transcript_path == tmp_path / "asr_medium.txt"
 
     def test_finds_captions(self, tmp_path):
         (tmp_path / "captions.en.vtt").write_text("WEBVTT\n")
@@ -652,7 +651,7 @@ class TestHydrateData:
         _hydrate_data(config, data)
         assert data.audio_path is None
         assert data.transcript_path is None
-        assert data.whisper_transcripts == {}
+        assert data.asr_transcripts == {}
 
     def test_finds_asr_transcripts(self, tmp_path):
         (tmp_path / "asr_granite-speech.txt").write_text("granite text")
@@ -660,9 +659,9 @@ class TestHydrateData:
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        assert "granite-speech" in data.whisper_transcripts
-        assert "parakeet" in data.whisper_transcripts
-        assert data.whisper_transcripts["granite-speech"]["txt"] == tmp_path / "asr_granite-speech.txt"
+        assert "granite-speech" in data.asr_transcripts
+        assert "parakeet" in data.asr_transcripts
+        assert data.asr_transcripts["granite-speech"]["txt"] == tmp_path / "asr_granite-speech.txt"
 
     def test_asr_json_discovered(self, tmp_path):
         (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
@@ -670,10 +669,10 @@ class TestHydrateData:
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
         _hydrate_data(config, data)
-        assert data.whisper_transcripts["parakeet"]["json"] == tmp_path / "asr_parakeet.json"
+        assert data.asr_transcripts["parakeet"]["json"] == tmp_path / "asr_parakeet.json"
 
-    def test_mixed_whisper_and_asr_fallback_picks_highest_rank(self, tmp_path):
-        (tmp_path / "whisper_small.txt").write_text("small text")
+    def test_mixed_models_fallback_picks_highest_rank(self, tmp_path):
+        (tmp_path / "asr_small.txt").write_text("small text")
         (tmp_path / "asr_parakeet.txt").write_text("parakeet text")
         config = SpeechConfig(url="x", output_dir=tmp_path)
         data = SpeechData()
@@ -710,7 +709,7 @@ class TestMergeTranscriptSourcesEdges:
 
     def test_skips_single_source_no_diarized(self, tmp_path, capsys):
         """Only whisper, no captions/external/diarized → need at least 2 sources."""
-        whisper = tmp_path / "whisper_merged.txt"
+        whisper = tmp_path / "asr_merged.txt"
         whisper.write_text("hello world " * 50)
         config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
         data = SpeechData(transcript_path=whisper)
@@ -721,7 +720,7 @@ class TestMergeTranscriptSourcesEdges:
     @patch("transcribe_critic.transcriber._merge_multi_source", return_value="merged result text")
     def test_flat_merge_calls_multi_source(self, mock_merge, tmp_path, capsys):
         """Whisper + captions (no structure) → flat merge via _merge_multi_source."""
-        whisper = tmp_path / "whisper_merged.txt"
+        whisper = tmp_path / "asr_merged.txt"
         whisper.write_text("hello world test transcript " * 50)
         captions = tmp_path / "captions.en.vtt"
         captions.write_text("WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nhello world\n")
@@ -756,7 +755,7 @@ class TestAnalyzeSourceSurvival:
 
     def test_writes_analysis_md(self, tmp_path, capsys):
         """With whisper + captions + merged → writes analysis.md with table."""
-        whisper = tmp_path / "whisper_merged.txt"
+        whisper = tmp_path / "asr_merged.txt"
         whisper.write_text("the quick brown fox jumps over the lazy dog")
         captions = tmp_path / "captions.en.vtt"
         captions.write_text(
@@ -779,7 +778,7 @@ class TestAnalyzeSourceSurvival:
         assert "ASR" in content
 
     def test_finds_most_similar(self, tmp_path, capsys):
-        whisper = tmp_path / "whisper_merged.txt"
+        whisper = tmp_path / "asr_merged.txt"
         whisper.write_text("the quick brown fox jumps over the lazy dog")
         merged = tmp_path / "transcript_merged.txt"
         merged.write_text("the quick brown fox jumps over the lazy dog")
@@ -806,7 +805,7 @@ class TestPrintCostEstimate:
 
     def test_nonzero_prints_table(self, tmp_path, capsys):
         config = SpeechConfig(url="x", output_dir=tmp_path,
-                              analyze_slides=True, whisper_models=["medium"])
+                              analyze_slides=True, models=["medium"])
         print_cost_estimate(config, num_slides=10, transcript_words=5000)
         out = capsys.readouterr().out
         assert "ESTIMATED API COSTS" in out
@@ -853,9 +852,21 @@ class TestMainCLI:
         from transcribe_critic.transcriber import main
         with patch.object(sys, "argv",
                           ["transcribe-critic", "https://example.com/v",
-                           "--whisper-models", "bogus"]):
+                           "--models", "bogus"]):
             with pytest.raises(SystemExit):
                 main()
+
+    def test_removed_whisper_models_flag_exits(self, capsys):
+        import sys
+        from transcribe_critic.transcriber import main
+        with patch.object(sys, "argv",
+                          ["transcribe-critic", "https://example.com/v",
+                           "--whisper-models", "small"]):
+            with pytest.raises(SystemExit):
+                main()
+        out = capsys.readouterr().out
+        assert "removed" in out.lower()
+        assert "--models" in out
 
     @patch.dict("os.environ", {}, clear=True)
     def test_api_no_key_exits(self):

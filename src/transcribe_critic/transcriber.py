@@ -57,10 +57,10 @@ from transcribe_critic import __version__
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, SpeechData, is_up_to_date,
-    ALL_MODELS, is_whisper_model, get_model_quality_rank, discover_transcript_files,
+    ALL_MODELS, is_whisper_model, get_model_quality_rank,
+    discover_transcript_files, has_legacy_whisper_files,
     DEFAULT_CLAUDE_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_MODELS,
-    AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT,
-    ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT,
+    AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT, ASR_MERGED_TXT,
     DIARIZATION_JSON, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
     ANALYSIS_MD, SLIDE_TIMESTAMPS_JSON,
     run_command, _print_reusing, _dry_run_skip, _should_skip,
@@ -100,18 +100,23 @@ def _hydrate_data(config: SpeechConfig, data: SpeechData) -> None:
     if cap.exists():
         data.captions_path = cap
 
-    # ASR model transcripts (new asr_*.txt first, legacy whisper_*.txt fallback)
+    # Detect legacy whisper_* files and bail with migration message
+    if has_legacy_whisper_files(d):
+        print(f"\n  Error: Found legacy whisper_*.txt files in {d}")
+        print("  Run 'transcribe-critic-migrate' to rename them to the new asr_* format:")
+        print(f"    transcribe-critic-migrate {d}")
+        print()
+        raise SystemExit(1)
+
+    # ASR model transcripts
     for model, txt, prefix in discover_transcript_files(d):
         json_path = d / f"{prefix}_{model}.json"
         data.register_transcript(model, txt, json_path)
 
-    # Ensemble merged (check new name first, then legacy)
+    # Ensemble merged
     merged = d / ASR_MERGED_TXT
-    legacy_merged = d / LEGACY_WHISPER_MERGED_TXT
     if merged.exists():
         data.transcript_path = merged
-    elif legacy_merged.exists():
-        data.transcript_path = legacy_merged
     elif data.asr_transcripts:
         # Fall back to highest-ranked single model
         best = max(data.asr_transcripts.keys(), key=get_model_quality_rank)
@@ -493,7 +498,7 @@ def analyze_source_survival(config: SpeechConfig, data: SpeechData) -> None:
     if data.transcript_path and data.transcript_path.exists():
         with open(data.transcript_path, 'r') as f:
             asr_text = f.read()
-        merged_names = (ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT)
+        merged_names = (ASR_MERGED_TXT,)
         if data.transcript_path.name in merged_names:
             label = "asr_merged"
         else:
@@ -615,11 +620,11 @@ Examples:
                         help=f"ASR model(s) to use, comma-separated (default: {_default_models}). "
                              f"Options: {_all_options}. "
                              "Multiple models enables ensembling for better accuracy")
-    # Deprecated aliases (kept for backward compat)
+    # Removed flags — hard error with migration guidance
     transcription_group.add_argument("--whisper-models", default=None, dest="whisper_models",
-                        help="[Deprecated: use --models] Whisper model(s), comma-separated")
+                        help=argparse.SUPPRESS)
     transcription_group.add_argument("--asr-models", default=None, dest="asr_models",
-                        help="[Deprecated: use --models] Non-Whisper ASR model(s), comma-separated")
+                        help=argparse.SUPPRESS)
 
     # Slides
     slides_group = parser.add_argument_group("slides")
@@ -746,13 +751,14 @@ Examples:
     if not args.dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Parse models — unified --models flag, with deprecated --whisper-models/--asr-models
-    import warnings
-    if args.models and (args.whisper_models or args.asr_models):
-        print("Error: --models cannot be combined with --whisper-models or --asr-models.")
-        print("Use --models alone (it accepts all model types).")
+    # Reject removed flags
+    if args.whisper_models or args.asr_models:
+        print("Error: --whisper-models and --asr-models have been removed.")
+        print("Use --models instead (it accepts all model types).")
+        print(f"  Example: --models {','.join(ALL_MODELS.keys())}")
         sys.exit(1)
 
+    # Parse models
     if args.models:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
         for m in models:
@@ -760,28 +766,6 @@ Examples:
                 print(f"Unknown model: {m}")
                 print(f"Valid options: {', '.join(ALL_MODELS.keys())}")
                 sys.exit(1)
-    elif args.whisper_models or args.asr_models:
-        warnings.warn(
-            "--whisper-models and --asr-models are deprecated; use --models instead.",
-            DeprecationWarning, stacklevel=2,
-        )
-        models = []
-        def _validate_legacy_models(csv_arg, want_whisper):
-            """Parse and validate a deprecated comma-separated model list."""
-            parsed = [m.strip() for m in csv_arg.split(",") if m.strip()]
-            label = "Whisper" if want_whisper else "ASR"
-            valid = [m for m in ALL_MODELS if is_whisper_model(m) == want_whisper]
-            for m in parsed:
-                if m not in ALL_MODELS or is_whisper_model(m) != want_whisper:
-                    print(f"Invalid {label} model: {m}")
-                    print(f"Valid {label} options: {', '.join(valid)}")
-                    sys.exit(1)
-            return parsed
-
-        if args.whisper_models:
-            models.extend(_validate_legacy_models(args.whisper_models, want_whisper=True))
-        if args.asr_models:
-            models.extend(_validate_legacy_models(args.asr_models, want_whisper=False))
     else:
         models = list(DEFAULT_MODELS)
 

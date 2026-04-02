@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from transcribe_critic.shared import (
-    DIARIZATION_JSON, ASR_MERGED_TXT, LEGACY_WHISPER_MERGED_TXT, TRANSCRIPT_MERGED_TXT,
+    DIARIZATION_JSON, ASR_MERGED_TXT, TRANSCRIPT_MERGED_TXT,
     discover_transcript_files,
 )
 from transcribe_critic.eval.convert import (
@@ -123,22 +123,17 @@ def _discover_hypotheses(output_dir: Path) -> list[tuple[str, Path]]:
     """Discover all available transcript variants in an output directory.
 
     Returns list of (name, path) tuples for each scorable transcript.
-    Searches for both new asr_*.txt and legacy whisper_*.txt files.
     """
     hypotheses = []
 
-    # Individual model outputs (new asr_* and legacy whisper_*)
+    # Individual model outputs
     for model, txt, prefix in discover_transcript_files(output_dir):
         hypotheses.append((f"{prefix}_{model}", txt))
 
-    # Ensemble-merged (check new name first, then legacy)
+    # Ensemble-merged
     merged = output_dir / ASR_MERGED_TXT
     if merged.exists():
         hypotheses.append(("asr_merged", merged))
-    else:
-        legacy = output_dir / LEGACY_WHISPER_MERGED_TXT
-        if legacy.exists():
-            hypotheses.append(("whisper_merged", legacy))
 
     # Source-merged (critical text from all sources)
     tm = output_dir / TRANSCRIPT_MERGED_TXT

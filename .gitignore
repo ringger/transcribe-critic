@@ -3,6 +3,8 @@
 *.mp4
 *.wav
 *.webm
+# Exception: small test fixtures
+!tests/fixtures/*.mp3
 
 # Python
 .coverage

@@ -69,3 +69,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests that run real ASR models (deselect with -m 'not integration')",
+]
+addopts = "-m 'not integration'"

@@ -18,7 +18,7 @@ Usage:
     transcribe-critic <url> [options]
 
 Examples:
-    # Basic usage - Whisper transcript + slides
+    # Basic usage - ASR transcript + slides
     transcribe-critic "https://youtube.com/watch?v=..."
 
     # Full pipeline with slide analysis
@@ -262,7 +262,7 @@ def estimate_api_cost(config: SpeechConfig, num_slides: int = 45, transcript_wor
         costs["details"].append(f"Slide analysis: {num_slides} slides × ${VISION_COST_PER_IMAGE} = ${slide_cost:.2f}")
 
     if config.merge_sources:
-        num_sources = 2  # Whisper + YouTube
+        num_sources = 2  # ASR + YouTube
         if config.external_transcript:
             num_sources += 1
         num_chunks = max(1, transcript_words // config.merge_chunk_words + 1)
@@ -319,7 +319,7 @@ def print_cost_estimate(config: SpeechConfig, num_slides: int = 45, transcript_w
 
 
 def merge_transcript_sources(config: SpeechConfig, data: SpeechData) -> None:
-    """Merge transcript sources (Whisper, captions, external) using wdiff alignment and LLM adjudication."""
+    """Merge transcript sources (ASR, captions, external) using wdiff alignment and LLM adjudication."""
     print()
     print("[merge] Merging transcript sources...")
 
@@ -340,10 +340,10 @@ def merge_transcript_sources(config: SpeechConfig, data: SpeechData) -> None:
 
     # Check if we have enough sources to merge
     has_captions = data.captions_path and data.captions_path.exists()
-    has_whisper = data.transcript_path and data.transcript_path.exists()
+    has_asr = data.transcript_path and data.transcript_path.exists()
 
-    if not has_whisper and not external_text:
-        print("  No Whisper transcript or external transcript available, skipping merge")
+    if not has_asr and not external_text:
+        print("  No ASR transcript or external transcript available, skipping merge")
         return
 
     # Use diarized transcript as a structured source when available
@@ -363,28 +363,29 @@ def merge_transcript_sources(config: SpeechConfig, data: SpeechData) -> None:
 
     # Load available transcripts
     youtube_text = None
-    whisper_text = None
+    asr_text = None
 
     if has_captions:
         youtube_text = clean_vtt_captions(data.captions_path)
         print(f"  YouTube captions: {len(youtube_text.split())} words")
 
-    if has_whisper:
+    if has_asr:
         with open(data.transcript_path, 'r') as f:
-            whisper_text = f.read()
-        print(f"  Whisper transcript: {len(whisper_text.split())} words")
+            asr_text = f.read()
+        asr_label = data.transcript_path.stem  # e.g. "asr_parakeet"
+        print(f"  ASR transcript ({asr_label}): {len(asr_text.split())} words")
 
     # Build list of sources for merging
     sources = []
-    if whisper_text:
-        sources.append(("Whisper AI Transcript", "better punctuation, sentence structure, formatting", whisper_text))
+    if asr_text:
+        sources.append(("ASR Transcript", "better punctuation, sentence structure, formatting", asr_text))
     if youtube_text:
         sources.append(("YouTube Captions", "ASR with larger vocabulary, better for proper nouns, names, technical terms", youtube_text))
     if external_text:
         sources.append(("External Transcript", "additional reference source provided by user", external_text))
 
     # Load diarized transcript if available — provides structural skeleton
-    # (not added as a text source since its text duplicates the Whisper transcript)
+    # (not added as a text source since its text duplicates the ASR transcript)
     diarized_text = None
     if has_diarized:
         with open(data.diarization_path, 'r') as f:
@@ -399,6 +400,26 @@ def merge_transcript_sources(config: SpeechConfig, data: SpeechData) -> None:
     if len(sources) < 2 and not diarized_text:
         print("  Need at least 2 sources to merge, skipping")
         return
+
+    # Check pairwise agreement — skip LLM merge if sources already agree
+    if config.merge_skip_threshold > 0 and len(sources) >= 2:
+        min_agreement = 100
+        for i in range(len(sources)):
+            for j in range(i + 1, len(sources)):
+                stats = _wdiff_stats(sources[i][2], sources[j][2])
+                if 'a' in stats and 'b' in stats:
+                    pct = min(stats['a']['common_pct'], stats['b']['common_pct'])
+                    min_agreement = min(min_agreement, pct)
+        if min_agreement >= config.merge_skip_threshold:
+            print(f"  Sources agree at {min_agreement}% (threshold: {config.merge_skip_threshold}%) — skipping LLM merge")
+            # Use the primary ASR transcript as merged output
+            merged_text = sources[0][2]
+            with open(merged_path, 'w') as f:
+                f.write(merged_text)
+            data.merged_transcript_path = merged_path
+            print(f"  Merged transcript saved: {merged_path.name}")
+            print(f"  Merged word count: {len(merged_text.split())} words")
+            return
 
     # Check if external or diarized transcript has structure (speaker labels).
     # External takes priority as skeleton (authoritative speaker names);
@@ -418,8 +439,8 @@ def merge_transcript_sources(config: SpeechConfig, data: SpeechData) -> None:
         print(f"  Parsed {len(skeleton_segments)} segments from {struct_label} transcript")
 
         if len(sources) < 2 and not external_text:
-            # Diarized skeleton with only Whisper — no LLM merge needed.
-            # The diarized transcript already has structure + Whisper text.
+            # Diarized skeleton with only ASR — no LLM merge needed.
+            # The diarized transcript already has structure + ASR text.
             print("  Single source with diarized skeleton — using diarized text directly")
             merged_text = diarized_text
         else:
@@ -660,7 +681,7 @@ Examples:
     llm_group.add_argument("--no-llm", action="store_true",
                         help="Skip all LLM-dependent features (merging, ensembling, slide analysis)")
     llm_group.add_argument("--no-merge", action="store_true",
-                        help="Skip merging YouTube captions with Whisper (merge is on by default)")
+                        help="Skip merging YouTube captions with ASR transcript (merge is on by default)")
     llm_group.add_argument("--merge-api", action="store_true",
                         help="Use Anthropic API for merging/ensembling (even if main LLM is local)")
     llm_group.add_argument("--merge-model",

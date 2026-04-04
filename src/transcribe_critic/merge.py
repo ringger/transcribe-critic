@@ -15,20 +15,14 @@ from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
     SpeechConfig, COMMON_WORDS,
+    write_temp_text, normalize_for_comparison,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
     is_up_to_date, _save_json, validate_checkpoint_version,
 )
 
-
-def _write_temp_text(content: str) -> str:
-    """Write content to a temporary text file, return its path.
-
-    Caller is responsible for cleanup with os.unlink().
-    """
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-        f.write(content)
-        return f.name
+# Backward-compatible aliases (used by transcription.py and transcriber.py)
+_write_temp_text = write_temp_text
+_normalize_for_comparison = normalize_for_comparison
 
 
 def _extract_text_from_html(html: str) -> str:
@@ -91,21 +85,6 @@ def _extract_text_from_html(html: str) -> str:
     # Collapse multiple blank lines
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
-
-
-def _normalize_for_comparison(text: str) -> str:
-    """Normalize text for comparison: lowercase, strip punctuation per-word.
-
-    Preserves word count: punctuation-only tokens (em-dashes, ellipses, etc.)
-    are replaced with an underscore (_) placeholder so alignment maps stay
-    in sync with original word positions.
-    """
-    words = text.split()
-    normalized = []
-    for w in words:
-        cleaned = re.sub(r'[^\w]', '', w).lower()
-        normalized.append(cleaned if cleaned else '_')
-    return ' '.join(normalized)
 
 
 def _analyze_differences_wdiff(text_a: str, text_b: str, config: SpeechConfig,

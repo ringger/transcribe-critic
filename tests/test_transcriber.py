@@ -705,7 +705,7 @@ class TestMergeTranscriptSourcesEdges:
         data = SpeechData()
         merge_transcript_sources(config, data)
         out = capsys.readouterr().out
-        assert "No Whisper transcript" in out
+        assert "No ASR transcript" in out
 
     def test_skips_single_source_no_diarized(self, tmp_path, capsys):
         """Only whisper, no captions/external/diarized → need at least 2 sources."""
@@ -730,6 +730,66 @@ class TestMergeTranscriptSourcesEdges:
         merge_transcript_sources(config, data)
         mock_merge.assert_called_once()
         assert data.merged_transcript_path is not None
+
+    def test_skip_merge_when_sources_agree(self, tmp_path, capsys):
+        """Sources agreeing above threshold → skip LLM merge, use primary ASR."""
+        text = "the quick brown fox jumps over the lazy dog " * 30
+        asr = tmp_path / "asr_parakeet.txt"
+        asr.write_text(text)
+        captions = tmp_path / "captions.en.vtt"
+        captions.write_text(
+            "WEBVTT\n\n00:00:01.000 --> 00:05:00.000\n"
+            + text + "\n"
+        )
+        config = SpeechConfig(
+            url="x", output_dir=tmp_path, skip_existing=False,
+            merge_skip_threshold=90,
+        )
+        data = SpeechData(transcript_path=asr, captions_path=captions)
+        merge_transcript_sources(config, data)
+        out = capsys.readouterr().out
+        assert "skipping LLM merge" in out
+        assert data.merged_transcript_path is not None
+        # Merged text should be the ASR text (primary source)
+        merged = data.merged_transcript_path.read_text()
+        assert merged == text
+
+    @patch("transcribe_critic.transcriber._merge_multi_source", return_value="merged via llm")
+    def test_no_skip_when_sources_disagree(self, mock_merge, tmp_path, capsys):
+        """Sources disagreeing below threshold → proceed with LLM merge."""
+        asr = tmp_path / "asr_parakeet.txt"
+        asr.write_text("completely different text about apples and oranges " * 30)
+        captions = tmp_path / "captions.en.vtt"
+        captions.write_text(
+            "WEBVTT\n\n00:00:01.000 --> 00:05:00.000\n"
+            + "totally unrelated words about cats and dogs " * 30 + "\n"
+        )
+        config = SpeechConfig(
+            url="x", output_dir=tmp_path, skip_existing=False,
+            merge_skip_threshold=97, local=False, api_key="fake",
+        )
+        data = SpeechData(transcript_path=asr, captions_path=captions)
+        merge_transcript_sources(config, data)
+        out = capsys.readouterr().out
+        assert "skipping LLM merge" not in out
+        mock_merge.assert_called_once()
+
+    def test_skip_threshold_zero_disables(self, tmp_path, capsys):
+        """merge_skip_threshold=0 disables the short-circuit."""
+        text = "identical text " * 50
+        asr = tmp_path / "asr_parakeet.txt"
+        asr.write_text(text)
+        captions = tmp_path / "captions.en.vtt"
+        captions.write_text("WEBVTT\n\n00:00:01.000 --> 00:05:00.000\n" + text + "\n")
+        config = SpeechConfig(
+            url="x", output_dir=tmp_path, skip_existing=False,
+            merge_skip_threshold=0, no_llm=True,
+        )
+        data = SpeechData(transcript_path=asr, captions_path=captions)
+        merge_transcript_sources(config, data)
+        out = capsys.readouterr().out
+        # Should NOT short-circuit (threshold disabled), but will skip due to --no-llm
+        assert "skipping LLM merge" not in out
 
 
 # ---------------------------------------------------------------------------

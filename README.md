@@ -1,12 +1,12 @@
 # Transcribe Critic
 
-Automated pipeline for producing accurate speech transcripts from video URLs. Downloads media, transcribes with multiple Whisper models, and merges all available sources — Whisper, YouTube captions, and optional external transcripts — into a single "critical text" using LLM-based adjudication.
+Automated pipeline for producing accurate speech transcripts from video URLs. Downloads media, transcribes with multiple ASR models, and merges all available sources — ASR transcripts, YouTube captions, and optional external transcripts — into a single "critical text" using LLM-based adjudication.
 
 The approach applies principles from [textual criticism](https://en.wikipedia.org/wiki/Textual_criticism): multiple independent "witnesses" to the same speech are aligned, compared, and merged by an LLM that judges each difference on its merits, without knowing which source produced which reading. This builds on earlier work applying similar techniques to OCR ([Ringger & Lund, 2014](https://scholarsarchive.byu.edu/facpub/1647/); [Lund et al., 2013](https://www.researchgate.net/publication/220861175_Error_Correction_with_In-Domain_Training_Across_Multiple_OCR_System_Outputs)), replacing trained classifiers with an LLM as the eclectic editor.
 
 ## How is this different from WhisperX?
 
-[WhisperX](https://github.com/m-bain/whisperX) improves a single Whisper run with voice-activity-detection (VAD) chunking, word-level timestamps, and speaker diarization — but the transcript still comes from one model pass. Transcribe Critic takes a different approach: it runs multiple Whisper models, pulls in YouTube captions and external human-edited transcripts, and treats them all as independent witnesses. An LLM then adjudicates every disagreement blindly, without knowing which source produced which reading. The result is a merged "critical text" that is more accurate than any single source. If you just need fast, well-segmented Whisper output, WhisperX is the right tool; if you want the most accurate transcript possible from multiple sources, this is.
+[WhisperX](https://github.com/m-bain/whisperX) improves a single Whisper run with voice-activity-detection (VAD) chunking, word-level timestamps, and speaker diarization — but the transcript still comes from one model pass. Transcribe Critic takes a different approach: it runs multiple ASR models (Whisper, Parakeet, Qwen3-ASR), pulls in YouTube captions and external human-edited transcripts, and treats them all as independent witnesses. An LLM then adjudicates every disagreement blindly, without knowing which source produced which reading. The result is a merged "critical text" that is more accurate than any single source. If you just need fast, well-segmented Whisper output, WhisperX is the right tool; if you want the most accurate transcript possible from multiple sources, this is.
 
 ## Features
 
@@ -24,7 +24,7 @@ The approach applies principles from [textual criticism](https://en.wikipedia.or
 - **Speaker diarization**: On by default — identifies who is speaking using pyannote.audio, with automatic or manual speaker naming — LLM speaker identification uses video metadata (title, description) for correct name spellings
 - **Transcript summarization**: Generates a structured summary (overview, key topics, exact notable quotes, speaker identifications) with model attribution — independently configurable LLM backend, can use a different model than the adjudication LLM
 - **Timestamped logging**: All pipeline output prefixed with `[HH:MM:SS]` wall-clock timestamps for log correlation during long runs
-- **Whisper-only mode**: `--no-llm` to skip all LLM features and run Whisper only
+- **ASR-only mode**: `--no-llm` to skip all LLM features and run ASR transcription only
 
 ## Installation
 
@@ -61,7 +61,7 @@ pip install -e .[asr]     # with non-Whisper ASR backends (Granite, Parakeet, Qw
 ## Quick Start
 
 ```bash
-# Basic: Whisper transcription + local LLM merge (free, uses Ollama)
+# Basic: ASR transcription + local LLM merge (free, uses Ollama)
 transcribe-critic "https://youtube.com/watch?v=..."
 
 # With an external human-edited transcript for three-way merge
@@ -71,7 +71,7 @@ transcribe-critic "https://youtube.com/watch?v=..." \
 # Use Anthropic Claude API instead of local Ollama (higher quality, costs money)
 transcribe-critic "https://youtube.com/watch?v=..." --api
 
-# Whisper only — no LLM merging at all
+# ASR only — no LLM merging at all
 transcribe-critic "https://youtube.com/watch?v=..." --no-llm
 ```
 

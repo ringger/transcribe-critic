@@ -8,6 +8,7 @@ from transcribe_critic.output import (
     _format_paragraph,
     _generate_interleaved_markdown,
     _generate_sequential_markdown,
+    _generate_timestamped_markdown,
     _get_best_transcript_text,
     generate_markdown,
 )
@@ -133,12 +134,12 @@ class TestGenerateSequentialMarkdown:
         result = _generate_sequential_markdown(data)
         assert "Introduction Slide" in result
 
-    def test_whisper_source_note(self, tmp_path):
-        transcript = tmp_path / "whisper.txt"
+    def test_asr_source_note(self, tmp_path):
+        transcript = tmp_path / "asr_parakeet.txt"
         transcript.write_text("Whisper text.")
         data = SpeechData(title="Talk", transcript_path=transcript)
         result = _generate_sequential_markdown(data)
-        assert "Whisper transcript" in result
+        assert "ASR transcript" in result
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +283,107 @@ class TestGenerateMarkdownLayout:
         generate_markdown(config, data)
         out = capsys.readouterr().out
         assert "timestamp-based" in out
+
+    def test_selects_timestamped_with_segments_no_slides(self, tmp_path, capsys):
+        """Segments with timestamps but no slides → timestamped layout."""
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False)
+        transcript = tmp_path / "asr_parakeet.txt"
+        transcript.write_text("Hello world. This is a test.")
+        data = SpeechData(
+            title="Test",
+            transcript_path=transcript,
+            transcript_segments=[
+                {"start": 0.0, "end": 2.0, "text": "Hello world."},
+                {"start": 2.0, "end": 4.0, "text": "This is a test."},
+            ],
+        )
+        generate_markdown(config, data)
+        out = capsys.readouterr().out
+        assert "timestamped transcript layout" in out
+        content = (tmp_path / "transcript.md").read_text()
+        assert "[0:00]" in content
+
+
+# ---------------------------------------------------------------------------
+# _generate_timestamped_markdown
+# ---------------------------------------------------------------------------
+
+class TestGenerateTimestampedMarkdown:
+    def test_basic_timestamps(self):
+        """Segments produce timestamp markers at ~60s intervals."""
+        # Build segments spanning 3 minutes
+        segments = []
+        words = []
+        for i in range(180):
+            seg_text = f"word{i}"
+            segments.append({"start": float(i), "end": float(i + 1), "text": seg_text})
+            words.append(seg_text)
+        data = SpeechData(
+            title="Test",
+            transcript_path=Path("/tmp/asr_parakeet.txt"),
+            transcript_segments=segments,
+        )
+        # Monkey-patch: provide transcript text via transcript_path
+        import tempfile, os
+        tf = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        tf.write(" ".join(words))
+        tf.close()
+        data.transcript_path = Path(tf.name)
+        try:
+            result = _generate_timestamped_markdown(data)
+            assert "# Test" in result
+            assert "[0:00]" in result
+            assert "[1:00]" in result
+            assert "[2:00]" in result
+        finally:
+            os.unlink(tf.name)
+
+    def test_uses_merged_when_available(self, tmp_path):
+        """Prefers merged transcript text over raw ASR."""
+        merged = tmp_path / "merged.txt"
+        merged.write_text("Merged content here with enough words for a paragraph.")
+        asr = tmp_path / "asr_parakeet.txt"
+        asr.write_text("Raw ASR content.")
+        data = SpeechData(
+            title="Test",
+            transcript_path=asr,
+            merged_transcript_path=merged,
+            transcript_segments=[
+                {"start": 0.0, "end": 5.0, "text": "Raw ASR content."},
+            ],
+        )
+        result = _generate_timestamped_markdown(data)
+        assert "Merged content here" in result
+        assert "Raw ASR content" not in result
+
+    def test_hour_format(self):
+        """Timestamps over 1 hour use H:MM:SS format."""
+        import tempfile, os
+        segments = [
+            {"start": 0.0, "end": 1.0, "text": "start"},
+            {"start": 3600.0, "end": 3601.0, "text": "hour"},
+        ]
+        tf = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        tf.write("start hour")
+        tf.close()
+        data = SpeechData(
+            title="Long",
+            transcript_path=Path(tf.name),
+            transcript_segments=segments,
+        )
+        try:
+            result = _generate_timestamped_markdown(data)
+            assert "[1:00:00]" in result
+        finally:
+            os.unlink(tf.name)
+
+    def test_falls_back_to_sequential_without_text(self):
+        """Falls back to sequential if no transcript text is available."""
+        data = SpeechData(
+            title="Empty",
+            transcript_segments=[
+                {"start": 0.0, "end": 1.0, "text": "word"},
+            ],
+        )
+        result = _generate_timestamped_markdown(data)
+        assert "## Transcript" in result

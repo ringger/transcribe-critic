@@ -2,7 +2,7 @@
 Diarization module for the speech transcription pipeline.
 
 Handles speaker diarization using pyannote.audio, assigning speaker labels
-to transcript segments based on word-level timestamps from Whisper.
+to transcript segments based on word-level timestamps from ASR models.
 """
 
 import json
@@ -14,6 +14,7 @@ import numpy as np
 from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
+    fmt_duration,
     SpeechConfig, SpeechData,
     DIARIZATION_JSON, DIARIZED_TXT,
     create_llm_client, llm_call_with_retry,
@@ -81,6 +82,7 @@ def _make_progress_hook():
     """Return a pyannote hook callback that prints step progress."""
     last_step = [None]
     last_pct = [None]
+    done_steps = set()
 
     def hook(step_name, step_artifact, **kwargs):
         completed = kwargs.get("completed", None)
@@ -89,7 +91,9 @@ def _make_progress_hook():
             pct = int(100 * completed / total)
             pct_bucket = pct // 10 * 10  # round down to nearest 10%
             if completed >= total:
-                print(f"  {step_name}: done")
+                if step_name not in done_steps:
+                    print(f"  {step_name}: done")
+                    done_steps.add(step_name)
                 last_pct[0] = None
             elif pct_bucket != last_pct[0]:
                 print(f"  {step_name}: {pct}% ({completed}/{total})")
@@ -361,6 +365,37 @@ def _run_pyannote_steps(config, data, pipeline):
         from pyannote.core import Annotation
         print("  No speakers detected in audio")
         return Annotation(uri=file["uri"])
+
+    # Short-circuit for single speaker — skip expensive embeddings and clustering
+    if np.nanmax(count.data) == 1.0 and not config.num_speakers:
+        print("  Single speaker detected — skipping embeddings and clustering")
+        # Build hard_clusters with shape (num_chunks, local_num_speakers)
+        # matching what pipeline.clustering() would return.
+        # Map all local speakers to cluster 0; mark inactive as -2.
+        num_chunks, _, local_num_speakers = segmentations.data.shape
+        hard_clusters = np.zeros((num_chunks, local_num_speakers), dtype=np.int64)
+        # Mark inactive local speakers per chunk
+        for c in range(num_chunks):
+            for s in range(local_num_speakers):
+                if binarized.data[c, :, s].sum() == 0:
+                    hard_clusters[c, s] = -2
+        count.data = np.minimum(count.data, 1).astype(np.int8)
+
+        print("  Step 6/6: Reconstruction...")
+        discrete_diarization = pipeline.reconstruct(
+            segmentations, hard_clusters, count)
+        diarization = pipeline.to_annotation(
+            discrete_diarization,
+            min_duration_on=0.0,
+            min_duration_off=pipeline.segmentation.min_duration_off,
+        )
+        diarization.uri = file["uri"]
+        mapping = {
+            label: expected
+            for label, expected in zip(diarization.labels(), pipeline.classes())
+        }
+        diarization = diarization.rename_labels(mapping=mapping)
+        return diarization
 
     # --- Step 4: Embeddings (expensive, ~40% of runtime) ---
     if is_up_to_date(emb_npy, seg_npy) and is_up_to_date(emb_npy, audio_path):
@@ -636,7 +671,7 @@ def _format_diarized_transcript(data: SpeechData) -> str:
         if speaker != current_speaker:
             # Flush previous speaker's text
             if current_speaker is not None and current_text:
-                timestamp = _format_timestamp(current_start)
+                timestamp = fmt_duration(current_start, always_hours=True)
                 lines.append(f"[{timestamp}] {current_speaker}: {' '.join(current_text)}")
             current_speaker = speaker
             current_text = [text]
@@ -646,15 +681,9 @@ def _format_diarized_transcript(data: SpeechData) -> str:
 
     # Flush last speaker
     if current_speaker is not None and current_text:
-        timestamp = _format_timestamp(current_start)
+        timestamp = fmt_duration(current_start, always_hours=True)
         lines.append(f"[{timestamp}] {current_speaker}: {' '.join(current_text)}")
 
     return "\n\n".join(lines)
 
 
-def _format_timestamp(seconds: float) -> str:
-    """Format seconds as H:MM:SS."""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    return f"{h}:{m:02d}:{s:02d}"

@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from transcribe_critic.shared import TRANSCRIPT_MD, AUDIO_MP3, METADATA_JSON
+from transcribe_critic.shared import TRANSCRIPT_MD, AUDIO_MP3, METADATA_JSON, fmt_duration as _fmt_duration
 from transcribe_critic.eval.datasets import load_manifest, filter_manifest
 
 
@@ -172,11 +172,3 @@ def run_pipeline(args):
     print(f"Results in: {run_dir}")
 
 
-def _fmt_duration(secs: float) -> str:
-    """Format seconds as H:MM:SS or M:SS."""
-    h = int(secs // 3600)
-    m = int((secs % 3600) // 60)
-    s = int(secs % 60)
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"

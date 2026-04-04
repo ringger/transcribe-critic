@@ -7,13 +7,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from transcribe_critic.shared import SpeechConfig, SpeechData
+from transcribe_critic.shared import SpeechConfig, SpeechData, fmt_duration
 
 from transcribe_critic.diarization import (
     _assign_speakers_to_words,
     _find_speaker_at_time,
     _format_diarized_transcript,
-    _format_timestamp,
     _get_embeddings_checkpointed,
     _get_intro_text,
     _identify_speakers,
@@ -26,21 +25,33 @@ from transcribe_critic.diarization import (
 
 
 # ---------------------------------------------------------------------------
-# _format_timestamp
+# fmt_duration (shared.py — was _format_timestamp in diarization.py)
 # ---------------------------------------------------------------------------
 
-class TestFormatTimestamp:
+class TestFmtDuration:
     def test_zero(self):
-        assert _format_timestamp(0) == "0:00:00"
+        assert fmt_duration(0) == "0:00"
+
+    def test_zero_always_hours(self):
+        assert fmt_duration(0, always_hours=True) == "0:00:00"
 
     def test_seconds_only(self):
-        assert _format_timestamp(45) == "0:00:45"
+        assert fmt_duration(45) == "0:45"
+
+    def test_seconds_always_hours(self):
+        assert fmt_duration(45, always_hours=True) == "0:00:45"
 
     def test_minutes_and_seconds(self):
-        assert _format_timestamp(125) == "0:02:05"
+        assert fmt_duration(125) == "2:05"
+
+    def test_minutes_always_hours(self):
+        assert fmt_duration(125, always_hours=True) == "0:02:05"
 
     def test_hours(self):
-        assert _format_timestamp(3661) == "1:01:01"
+        assert fmt_duration(3661) == "1:01:01"
+
+    def test_hours_always_hours(self):
+        assert fmt_duration(3661, always_hours=True) == "1:01:01"
 
 
 # ---------------------------------------------------------------------------
@@ -472,6 +483,23 @@ class TestMakeProgressHook:
         # Called without completed/total — should not crash
         hook("segmentation", "some_artifact")
 
+    def test_done_printed_only_once_per_step(self, capsys):
+        """Hook should not print 'done' twice for the same step."""
+        hook = _make_progress_hook()
+        hook("segmentation", None, completed=100, total=100)
+        hook("segmentation", None, completed=100, total=100)
+        captured = capsys.readouterr()
+        assert captured.out.count("segmentation: done") == 1
+
+    def test_done_printed_for_different_steps(self, capsys):
+        """Each distinct step gets its own 'done' message."""
+        hook = _make_progress_hook()
+        hook("segmentation", None, completed=100, total=100)
+        hook("embeddings", None, completed=50, total=50)
+        captured = capsys.readouterr()
+        assert "segmentation: done" in captured.out
+        assert "embeddings: done" in captured.out
+
 
 # ---------------------------------------------------------------------------
 # _run_pyannote_steps (checkpoint logic)
@@ -657,6 +685,74 @@ class TestRunPyannoteSteps:
 
         # Segmentation should have been re-run since cache is stale
         pipeline.get_segmentations.assert_called_once()
+
+    @patch("transcribe_critic.diarization._get_embeddings_checkpointed")
+    @patch.dict("sys.modules", {
+        "pyannote": MagicMock(),
+        "pyannote.core": MagicMock(),
+        "pyannote.audio": MagicMock(),
+        "pyannote.audio.utils": MagicMock(),
+        "pyannote.audio.utils.signal": MagicMock(),
+    })
+    def test_single_speaker_skips_embeddings(self, mock_get_emb, tmp_path, capsys):
+        """Single speaker detected → skip embeddings and clustering."""
+        pipeline = _make_mock_pipeline()
+        # Override speaker count to return max=1 (single speaker)
+        count_swf = MagicMock()
+        count_swf.data = np.array([[1], [1], [1]], dtype=np.uint8)
+        pipeline.speaker_count.return_value = count_swf
+
+        # Single-speaker reconstruction mock
+        mock_annotation = MagicMock()
+        mock_annotation.labels.return_value = [0]
+        mock_annotation.rename_labels.return_value = mock_annotation
+        pipeline.to_annotation.return_value = mock_annotation
+        pipeline.reconstruct.return_value = MagicMock()
+        pipeline.classes.return_value = iter(["SPEAKER_00"])
+
+        config = SpeechConfig(url="test", output_dir=tmp_path)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.wav"
+        data.audio_path.touch()
+
+        _run_pyannote_steps(config, data, pipeline)
+
+        out = capsys.readouterr().out
+        assert "Single speaker detected" in out
+        # Embeddings should NOT have been extracted
+        mock_get_emb.assert_not_called()
+        # Clustering should NOT have been called
+        pipeline.clustering.assert_not_called()
+        # Reconstruction should still have been called
+        pipeline.reconstruct.assert_called_once()
+
+    @patch("transcribe_critic.diarization._get_embeddings_checkpointed")
+    @patch.dict("sys.modules", {
+        "pyannote": MagicMock(),
+        "pyannote.core": MagicMock(),
+        "pyannote.audio": MagicMock(),
+        "pyannote.audio.utils": MagicMock(),
+        "pyannote.audio.utils.signal": MagicMock(),
+    })
+    def test_single_speaker_respects_num_speakers_override(self, mock_get_emb, tmp_path):
+        """num_speakers override should bypass single-speaker short-circuit."""
+        mock_get_emb.return_value = np.random.rand(10, 3, 192).astype(np.float32)
+        pipeline = _make_mock_pipeline()
+        # Override speaker count to return max=1
+        count_swf = MagicMock()
+        count_swf.data = np.array([[1], [1], [1]], dtype=np.uint8)
+        pipeline.speaker_count.return_value = count_swf
+
+        config = SpeechConfig(url="test", output_dir=tmp_path, num_speakers=2)
+        data = SpeechData()
+        data.audio_path = tmp_path / "audio.wav"
+        data.audio_path.touch()
+
+        _run_pyannote_steps(config, data, pipeline)
+
+        # With num_speakers override, should run full pipeline including embeddings
+        mock_get_emb.assert_called_once()
+        pipeline.clustering.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

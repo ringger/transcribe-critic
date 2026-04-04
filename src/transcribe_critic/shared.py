@@ -7,8 +7,10 @@ transcriber.py, merge.py, and all pipeline stage modules.
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from dataclasses import dataclass, field, replace
@@ -56,6 +58,46 @@ ALL_MODELS = {
     "parakeet":        {"backend": "parakeet_mlx", "quality_rank": 9,  # 24.7% avg WER — best single model
                         "hf_id": "mlx-community/parakeet-tdt-0.6b-v2"},
 }
+
+
+def fmt_duration(secs: float, *, always_hours: bool = False) -> str:
+    """Format seconds as H:MM:SS or M:SS.
+
+    Args:
+        secs: Duration in seconds.
+        always_hours: If True, always include hours even when < 1 hour.
+    """
+    h = int(secs // 3600)
+    m = int((secs % 3600) // 60)
+    s = int(secs % 60)
+    if h > 0 or always_hours:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def write_temp_text(content: str) -> str:
+    """Write content to a temporary text file, return its path.
+
+    Caller is responsible for cleanup with os.unlink().
+    """
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write(content)
+        return f.name
+
+
+def normalize_for_comparison(text: str) -> str:
+    """Normalize text for comparison: lowercase, strip punctuation per-word.
+
+    Preserves word count: punctuation-only tokens (em-dashes, ellipses, etc.)
+    are replaced with an underscore (_) placeholder so alignment maps stay
+    in sync with original word positions.
+    """
+    words = text.split()
+    normalized = []
+    for w in words:
+        cleaned = re.sub(r'[^\w]', '', w).lower()
+        normalized.append(cleaned if cleaned else '_')
+    return ' '.join(normalized)
 
 
 def is_whisper_model(name: str) -> bool:
@@ -106,7 +148,7 @@ class SpeechConfig:
     models: Optional[list] = None  # All ASR models to run (None = use defaults)
     scene_threshold: float = 0.1
     analyze_slides: bool = False
-    merge_sources: bool = True  # Merge YouTube captions with Whisper (default: on)
+    merge_sources: bool = True  # Merge YouTube captions with ASR transcript (default: on)
     no_llm: bool = False  # Skip all LLM-dependent features (merging, ensembling, slide analysis)
     api_key: Optional[str] = None
     claude_model: str = DEFAULT_CLAUDE_MODEL  # Anthropic API model; ignored when local=True (uses local_model)
@@ -123,7 +165,8 @@ class SpeechConfig:
     verbose: bool = False
     # Merge tuning
     merge_chunk_words: int = 500  # Words per chunk for merge API calls (multi-source merge)
-    merge_diff_context_words: int = 30  # Words of context around each diff (Whisper ensembling)
+    merge_skip_threshold: int = 97  # Skip LLM merge when source agreement exceeds this % (0 to disable)
+    merge_diff_context_words: int = 30  # Words of context around each diff (ASR ensembling)
     merge_max_diffs_per_call: int = 50  # Max diffs per LLM call (Whisper ensembling)
     api_max_retries: int = 5
     api_initial_backoff: int = 5  # seconds

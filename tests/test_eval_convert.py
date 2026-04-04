@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from transcribe_critic.eval.convert import (
+    _segments_to_stm,
     nlp_to_stm,
     diarized_txt_to_stm,
     structured_merged_to_stm,
@@ -14,6 +15,60 @@ from transcribe_critic.eval.convert import (
     detect_hypothesis_format,
     hypothesis_to_stm,
 )
+
+
+# ---------------------------------------------------------------------------
+# _segments_to_stm (shared helper)
+# ---------------------------------------------------------------------------
+
+class TestSegmentsToStm:
+    def test_end_time_from_next_segment(self):
+        """End time of each segment should be the start of the next."""
+        segments = [
+            (0.0, "speaker_A", "hello world"),
+            (5.0, "speaker_B", "how are you"),
+            (10.0, "speaker_A", "fine thanks"),
+        ]
+        result = _segments_to_stm(segments, "file1")
+        lines = result.strip().split("\n")
+        assert len(lines) == 3
+        assert "0.000 5.000" in lines[0]
+        assert "5.000 10.000" in lines[1]
+
+    def test_last_segment_end_estimated_from_words(self):
+        """Last segment end time estimated from word count / 2.5."""
+        segments = [
+            (10.0, "spk", "one two three four five"),  # 5 words → 2.0s
+        ]
+        result = _segments_to_stm(segments, "file1")
+        # end = 10.0 + max(1, 5/2.5) = 12.0
+        assert "10.000 12.000" in result
+
+    def test_last_segment_minimum_duration(self):
+        """Last segment should have at least 1 second duration."""
+        segments = [
+            (10.0, "spk", "hi"),  # 1 word → 0.4s, clamped to 1.0
+        ]
+        result = _segments_to_stm(segments, "file1")
+        # end = 10.0 + max(1, 1/2.5) = 11.0
+        assert "10.000 11.000" in result
+
+    def test_timestamp_precision(self):
+        """Timestamps should use 3 decimal places."""
+        segments = [(1.5, "spk", "word")]
+        result = _segments_to_stm(segments, "f")
+        assert "1.500" in result
+
+    def test_empty_segments(self):
+        """Empty segments list should return empty string."""
+        result = _segments_to_stm([], "file1")
+        assert result == ""
+
+    def test_file_id_in_output(self):
+        """File ID should appear in each STM line."""
+        segments = [(0.0, "spk", "text")]
+        result = _segments_to_stm(segments, "my_file_42")
+        assert "my_file_42" in result
 
 
 # --- Fixtures ---

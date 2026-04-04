@@ -5,15 +5,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Optional
 
-
-def _fmt_duration(secs: float) -> str:
-    """Format seconds as H:MM:SS or M:SS."""
-    h = int(secs // 3600)
-    m = int((secs % 3600) // 60)
-    s = int(secs % 60)
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
+from transcribe_critic.shared import fmt_duration as _fmt_duration
 
 
 def _fmt_pct(val: Optional[float]) -> str:

@@ -17,6 +17,22 @@ from transcribe_critic.shared import (
 )
 
 
+def _segments_to_stm(segments: list, file_id: str) -> str:
+    """Convert a list of (start, speaker, text) tuples to STM format.
+
+    End times are derived from the next segment's start, or estimated from
+    word count (~2.5 words/sec) for the final segment.
+    """
+    stm_lines = []
+    for i, (start, speaker, body) in enumerate(segments):
+        if i + 1 < len(segments):
+            end = segments[i + 1][0]
+        else:
+            end = start + max(1, len(body.split()) / 2.5)
+        stm_lines.append(f"{file_id} 1 {speaker} {start:.3f} {end:.3f} {body}")
+    return "\n".join(stm_lines)
+
+
 def nlp_to_stm(nlp_path: Path, file_id: str) -> str:
     """Convert Earnings-21 .nlp reference file to STM format.
 
@@ -119,16 +135,7 @@ def diarized_txt_to_stm(path: Path, file_id: str) -> str:
             safe_speaker = re.sub(r"[^a-zA-Z0-9_]", "_", speaker.strip())
             segments.append((start, safe_speaker, body))
 
-    stm_lines = []
-    for i, (start, speaker, body) in enumerate(segments):
-        if i + 1 < len(segments):
-            end = segments[i + 1][0]
-        else:
-            # Estimate end from word count (~2.5 words/sec)
-            end = start + max(1, len(body.split()) / 2.5)
-        stm_lines.append(f"{file_id} 1 {speaker} {start:.3f} {end:.3f} {body}")
-
-    return "\n".join(stm_lines)
+    return _segments_to_stm(segments, file_id)
 
 
 def structured_merged_to_stm(path: Path, file_id: str) -> str:
@@ -169,21 +176,13 @@ def structured_merged_to_stm(path: Path, file_id: str) -> str:
             safe_speaker = re.sub(r"[^a-zA-Z0-9_]", "_", speaker)
             segments.append((start, safe_speaker, body))
 
-    stm_lines = []
-    for i, (start, speaker, body) in enumerate(segments):
-        if i + 1 < len(segments):
-            end = segments[i + 1][0]
-        else:
-            end = start + max(1, len(body.split()) / 2.5)
-        stm_lines.append(f"{file_id} 1 {speaker} {start:.3f} {end:.3f} {body}")
-
-    return "\n".join(stm_lines)
+    return _segments_to_stm(segments, file_id)
 
 
 def plain_text_to_stm(path: Path, file_id: str, speaker: str = "unknown") -> str:
     """Convert a plain text transcript to single-speaker STM.
 
-    Used for Whisper .txt output or flat transcript_merged.txt without
+    Used for ASR .txt output or flat transcript_merged.txt without
     speaker labels. Only suitable for WER (not cpWER or DER).
     """
     text = path.read_text().strip()

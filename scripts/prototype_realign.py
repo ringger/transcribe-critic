@@ -27,67 +27,21 @@ from pathlib import Path
 # Add src to path so we can reuse pipeline code
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from transcribe_critic.shared import ALL_MODELS, get_model_quality_rank
+from transcribe_critic.shared import (
+    ALL_MODELS, get_model_quality_rank, discover_models_with_json,
+)
 from transcribe_critic.transcription import (
     _apply_resolutions,
     _filter_trivial_diffs,
+    _load_model_confidence,
     _merge_pairwise_diffs,
     _normalize_for_comparison,
     _parse_wdiff_diffs,
 )
 
 
-# ---------------------------------------------------------------------------
-# Word-position → timestamp mapping
-# ---------------------------------------------------------------------------
-
-def build_word_timestamp_index(json_path: Path) -> list[dict]:
-    """Build a flat list of {word, start, end} from an asr_*.json file.
-
-    Returns one entry per *whole word* in transcript order.  Subword tokens
-    (e.g., parakeet's character-level timestamps) are merged: tokens that
-    don't start with a space are joined to the preceding token.  If the JSON
-    has no word-level timestamps, falls back to segment-level (assigns
-    segment time span to each word in the segment).
-    """
-    with open(json_path) as f:
-        data = json.load(f)
-
-    words = []
-    for seg in data.get("segments", []):
-        if seg.get("words"):
-            # Merge subword tokens into whole words.
-            # Convention: a token starting with a space begins a new word.
-            for w in seg["words"]:
-                raw = w.get("word", "")
-                if not raw:
-                    continue
-                if raw.startswith(" ") or not words:
-                    # New word
-                    words.append({
-                        "word": raw.strip(),
-                        "start": w["start"],
-                        "end": w["end"],
-                    })
-                else:
-                    # Continuation of previous word
-                    words[-1]["word"] += raw
-                    words[-1]["end"] = w["end"]
-        else:
-            # Fallback: spread segment time evenly across words
-            seg_words = seg.get("text", "").split()
-            if not seg_words:
-                continue
-            seg_start = seg.get("start", 0)
-            seg_end = seg.get("end", 0)
-            dur = (seg_end - seg_start) / max(len(seg_words), 1)
-            for i, sw in enumerate(seg_words):
-                words.append({
-                    "word": sw,
-                    "start": seg_start + i * dur,
-                    "end": seg_start + (i + 1) * dur,
-                })
-    return words
+# Use _load_model_confidence from transcription.py for word timestamp indexes.
+# It handles subword merging, Whisper probability, and parakeet confidence.
 
 
 def word_pos_to_time_span(word_index: list[dict], pos: int, length: int,
@@ -277,21 +231,6 @@ def word_overlap_score(candidate: str, reference: str) -> float:
 # Main logic
 # ---------------------------------------------------------------------------
 
-def find_available_models(run_dir: Path) -> dict[str, dict]:
-    """Discover which models have both txt and json outputs in the run dir."""
-    models = {}
-    for txt_path in sorted(run_dir.glob("asr_*.txt")):
-        name = txt_path.stem.replace("asr_", "")
-        if name == "merged":
-            continue
-        json_path = run_dir / f"asr_{name}.json"
-        if json_path.exists() and name in ALL_MODELS:
-            models[name] = {
-                "txt": txt_path,
-                "json": json_path,
-                "text": txt_path.read_text().strip(),
-            }
-    return models
 
 
 
@@ -306,7 +245,7 @@ def run_realignment(run_dir: Path, audio_path: Path, context_secs: float,
     print()
 
     # 1. Discover available models
-    models = find_available_models(run_dir)
+    models = discover_models_with_json(run_dir)
     if len(models) < 2:
         print(f"Need at least 2 models, found {len(models)}: {list(models.keys())}")
         return
@@ -320,13 +259,13 @@ def run_realignment(run_dir: Path, audio_path: Path, context_secs: float,
     print()
 
     # 3. Build word-timestamp index for base model
-    base_word_index = build_word_timestamp_index(models[base_model]["json"])
+    base_word_index = _load_model_confidence(models[base_model]["json"])
     print(f"Base model has {len(base_word_index)} timestamped words")
 
     # Also build indexes for other models (for their readings)
     model_word_indexes = {base_model: base_word_index}
     for m in other_models:
-        model_word_indexes[m] = build_word_timestamp_index(models[m]["json"])
+        model_word_indexes[m] = _load_model_confidence(models[m]["json"])
 
     # 4. Find disagreements (reuse pipeline diffing)
     # Build a lightweight SpeechConfig stand-in

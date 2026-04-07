@@ -296,6 +296,30 @@ def discover_transcript_files(directory: Path) -> list[tuple[str, Path, str]]:
     return results
 
 
+def discover_models_with_json(directory: Path,
+                              exclude: set[str] = None) -> dict[str, dict]:
+    """Discover ASR models that have both txt and json outputs.
+
+    Returns dict of model_name → {txt: Path, json: Path, text: str}.
+    Excludes merged/realigned and any names in the exclude set.
+    Only includes models registered in ALL_MODELS.
+    """
+    skip = {"merged", "realigned"} | (exclude or set())
+    models = {}
+    for txt_path in sorted(directory.glob("asr_*.txt")):
+        name = txt_path.stem.removeprefix("asr_")
+        if name in skip:
+            continue
+        json_path = directory / f"asr_{name}.json"
+        if json_path.exists() and name in ALL_MODELS:
+            models[name] = {
+                "txt": txt_path,
+                "json": json_path,
+                "text": txt_path.read_text().strip(),
+            }
+    return models
+
+
 def has_legacy_whisper_files(directory: Path) -> bool:
     """Check if a directory contains legacy whisper_*.txt files."""
     return any(directory.glob("whisper_*.txt"))

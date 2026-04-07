@@ -20,63 +20,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from transcribe_critic.shared import ALL_MODELS, get_model_quality_rank
+from transcribe_critic.shared import (
+    ALL_MODELS, get_model_quality_rank, discover_models_with_json,
+)
 from transcribe_critic.transcription import (
     _apply_resolutions,
     _filter_trivial_diffs,
+    _get_confidence_for_diff,
+    _load_model_confidence,
     _merge_pairwise_diffs,
     _parse_wdiff_diffs,
 )
-
-
-def load_word_confidence(json_path: Path) -> list[dict]:
-    """Load per-word confidence from an asr_*.json file.
-
-    Handles both Whisper format (word.probability) and merged subword tokens.
-    Returns list of {word, start, end, confidence} dicts.
-    """
-    with open(json_path) as f:
-        data = json.load(f)
-
-    words = []
-    for seg in data.get("segments", []):
-        seg_logprob = seg.get("avg_logprob", None)
-
-        if seg.get("words"):
-            for w in seg["words"]:
-                raw = w.get("word", "")
-                if not raw:
-                    continue
-                conf = w.get("probability", w.get("confidence", None))
-
-                if raw.startswith(" ") or not words:
-                    words.append({
-                        "word": raw.strip(),
-                        "start": w["start"],
-                        "end": w["end"],
-                        "confidence": conf,
-                        "seg_logprob": seg_logprob,
-                    })
-                else:
-                    # Merge subword token
-                    words[-1]["word"] += raw
-                    words[-1]["end"] = w["end"]
-                    # Use minimum confidence across subwords
-                    if conf is not None and words[-1]["confidence"] is not None:
-                        words[-1]["confidence"] = min(words[-1]["confidence"], conf)
-                    words[-1]["seg_logprob"] = seg_logprob
-        else:
-            # No word-level timestamps — use segment level
-            seg_words = seg.get("text", "").split()
-            for sw in seg_words:
-                words.append({
-                    "word": sw,
-                    "start": seg.get("start", 0),
-                    "end": seg.get("end", 0),
-                    "confidence": None,
-                    "seg_logprob": seg_logprob,
-                })
-    return words
 
 
 def normalize(text: str) -> str:
@@ -135,18 +89,7 @@ def main():
     threshold = args.threshold
 
     # Discover models with JSON
-    models = {}
-    for txt_path in sorted(run_dir.glob("asr_*.txt")):
-        name = txt_path.stem.replace("asr_", "")
-        if name in ("merged", "realigned"):
-            continue
-        json_path = run_dir / f"asr_{name}.json"
-        if json_path.exists() and name in ALL_MODELS:
-            models[name] = {
-                "txt": txt_path,
-                "json": json_path,
-                "text": txt_path.read_text().strip(),
-            }
+    models = discover_models_with_json(run_dir)
 
     if len(models) < 2:
         print(f"Need at least 2 models, found {len(models)}")
@@ -161,7 +104,7 @@ def main():
     conf_indexes = {}
     conf_available = {}
     for name, info in models.items():
-        idx = load_word_confidence(info["json"])
+        idx = _load_model_confidence(info["json"])
         conf_indexes[name] = idx
         has_conf = sum(1 for w in idx if w["confidence"] is not None)
         conf_available[name] = has_conf > 0

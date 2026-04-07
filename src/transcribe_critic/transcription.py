@@ -387,8 +387,59 @@ def _format_reading(text: str) -> str:
     return f'"{text}"' if text else "(omit)"
 
 
+def _load_model_confidence(json_path: Path) -> list[dict]:
+    """Load per-word confidence from an ASR JSON file.
+
+    Returns a flat list of {word, start, end, confidence} dicts with
+    subword tokens merged into whole words (min confidence across tokens).
+    """
+    if not json_path or not json_path.exists():
+        return []
+
+    with open(json_path) as f:
+        data = json.load(f)
+
+    words = []
+    for seg in data.get("segments", []):
+        for w in seg.get("words", []):
+            raw = w.get("word", "")
+            if not raw:
+                continue
+            conf = w.get("probability", w.get("confidence"))
+            if raw.startswith(" ") or not words:
+                words.append({
+                    "word": raw.strip(), "start": w["start"],
+                    "end": w["end"], "confidence": conf,
+                })
+            else:
+                words[-1]["word"] += raw
+                words[-1]["end"] = w["end"]
+                if conf is not None and words[-1]["confidence"] is not None:
+                    words[-1]["confidence"] = min(words[-1]["confidence"], conf)
+    return words
+
+
+def _get_confidence_for_diff(word_index: list[dict], text: str,
+                             word_pos: int, word_len: int) -> float | None:
+    """Get minimum confidence across words at a diff position.
+
+    Uses word_pos as the index into word_index. Returns None if no
+    confidence data is available at that position.
+    """
+    if not word_index or not text:
+        return None
+    confidences = []
+    for wp in range(word_pos, word_pos + max(word_len, 1)):
+        if 0 <= wp < len(word_index):
+            conf = word_index[wp]["confidence"]
+            if conf is not None:
+                confidences.append(conf)
+    return min(confidences) if confidences else None
+
+
 def _build_cluster_prompt(cluster: list[dict], base_words: list[str],
-                          context_words: int = 30) -> str:
+                          context_words: int = 30,
+                          model_confidence: dict[str, list[dict]] = None) -> str:
     """Build an LLM prompt for resolving a cluster of diffs.
 
     Shows context around the diffs with numbered disagreement markers.
@@ -434,7 +485,20 @@ def _build_cluster_prompt(cluster: list[dict], base_words: list[str],
             parts = []
             for j, (model, text) in enumerate(d["readings"].items()):
                 letter = chr(ord("A") + j)
-                parts.append(f'{letter}: {_format_reading(text)}')
+                conf_str = ""
+                if model_confidence and model in model_confidence:
+                    # Use b_pos for base model, a_pos for others
+                    wp = d["b_pos"]
+                    wl = d["b_len"]
+                    if model != list(d["readings"].keys())[-1]:
+                        # Non-base models use a_pos if available
+                        wp = d.get("a_pos", wp)
+                        wl = d.get("a_len", wl)
+                    conf = _get_confidence_for_diff(
+                        model_confidence[model], text, wp, wl)
+                    if conf is not None:
+                        conf_str = f" [conf={conf:.0%}]"
+                parts.append(f'{letter}: {_format_reading(text)}{conf_str}')
             diff_lines.append(f'{i}. {" | ".join(parts)}')
         else:
             # Legacy 2-way format
@@ -453,7 +517,8 @@ DISAGREEMENTS:
 
 
 def _call_and_parse_cluster(client, config, cluster, cluster_prompt,
-                            hallucination_warning):
+                            hallucination_warning,
+                            has_confidence: bool = False):
     """Call the LLM to resolve a cluster and parse the A/B/C response.
 
     Returns (cluster_choices, cluster_resolutions) where:
@@ -467,16 +532,25 @@ def _call_and_parse_cluster(client, config, cluster, cluster_prompt,
         n_choices = max(len(d["readings"]) for d in cluster if "readings" in d)
         letters = [chr(ord("A") + i) for i in range(n_choices)]
         letter_list = ", ".join(letters[:-1]) + f", or {letters[-1]}"
-        model_desc = f"{n_choices} Whisper transcriptions"
+        model_desc = f"{n_choices} ASR transcriptions"
         agreement_hint = "\nWhen multiple options show the same text, that agreement is a useful signal.\n"
     else:
         letter_list = "A or B"
-        model_desc = "two Whisper transcriptions"
+        model_desc = "two ASR transcriptions"
         agreement_hint = ""
+
+    confidence_hint = ""
+    if has_confidence:
+        confidence_hint = (
+            "\nSome readings include a [conf=X%] score indicating the ASR model's "
+            "acoustic confidence. Lower confidence means the model was less certain "
+            "about what it heard. Use this as one signal among others.\n"
+        )
 
     prompts = load_prompt("ensemble")
     prompt = prompts["primary"].format(
         model_desc=model_desc,
+        confidence_hint=confidence_hint,
         agreement_hint=agreement_hint,
         hallucination_warning=hallucination_warning,
         cluster_prompt=cluster_prompt,
@@ -537,7 +611,8 @@ def _call_and_parse_cluster(client, config, cluster, cluster_prompt,
 
 
 def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
-                           config: SpeechConfig) -> str:
+                           config: SpeechConfig,
+                           model_confidence: dict[str, list[dict]] = None) -> str:
     """Resolve Whisper model disagreements via targeted diff resolution.
 
     Instead of rewriting entire text chunks, this:
@@ -671,10 +746,13 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
         cluster_prompt = _build_cluster_prompt(
             cluster, base_words,
             context_words=config.merge_diff_context_words,
+            model_confidence=model_confidence,
         )
 
+        has_conf = model_confidence is not None
         cluster_choices, cluster_resolutions = _call_and_parse_cluster(
             client, merge_cfg, cluster, cluster_prompt, hallucination_warning,
+            has_confidence=has_conf,
         )
 
         # If all diffs unresolved, retry without context (may help with content refusals)
@@ -942,7 +1020,8 @@ def _run_parakeet(audio_path: Path, hf_id: str, txt_path: Path, json_path: Path,
     segments = []
     for sentence in result.sentences:
         words = [
-            {"word": t.text, "start": t.start, "end": t.end}
+            {"word": t.text, "start": t.start, "end": t.end,
+             "confidence": t.confidence}
             for t in sentence.tokens
         ]
         segments.append({
@@ -1167,7 +1246,26 @@ def _ensemble_asr_transcripts(config: SpeechConfig, data: SpeechData) -> None:
         print("  --no-llm flag set - using base model without resolving differences")
         merged_text = base_text
     else:
-        merged_text = _resolve_whisper_diffs(base_text, transcripts, config)
+        # Load per-word confidence from JSON files for the adjudicator
+        conf_data = None
+        if config.confidence:
+            conf_data = {}
+            for model in models:
+                paths = data.asr_transcripts.get(model, {})
+                json_path = paths.get("json")
+                if json_path:
+                    words = _load_model_confidence(json_path)
+                    if any(w["confidence"] is not None for w in words):
+                        conf_data[model] = words
+            if conf_data:
+                print(f"  Loaded confidence data for: {', '.join(conf_data.keys())}")
+            else:
+                conf_data = None
+
+        merged_text = _resolve_whisper_diffs(
+            base_text, transcripts, config,
+            model_confidence=conf_data,
+        )
 
     # Save ensemble-merged transcript
     merged_path = config.output_dir / ASR_MERGED_TXT

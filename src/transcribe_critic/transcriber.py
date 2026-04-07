@@ -688,6 +688,8 @@ Examples:
                         help="Model for merging/ensembling (default: same as --claude-model or --local-model)")
     llm_group.add_argument("--merge-api-key",
                         help="Separate API key for merging/ensembling (default: same as --api-key)")
+    llm_group.add_argument("--confidence", action="store_true",
+                        help="Include ASR confidence scores in ensemble adjudication prompts")
 
     # Diarization
     diarize_group = parser.add_argument_group("diarization")
@@ -841,6 +843,7 @@ Examples:
         slides_local=False if args.slides_api else None,
         slides_model=args.slides_model,
         slides_api_key=args.slides_api_key,
+        confidence=getattr(args, "confidence", False),
     )
 
     data = SpeechData()

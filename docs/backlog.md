@@ -28,6 +28,34 @@ The wdiff-based ensemble degrades (31-32% WER) when mixing architecturally diver
 
 - **Qwen3-ASR token limit.** Default `max_tokens=8192` insufficient for 5-min chunks. Workaround in place (`max_tokens=32768`). Should file upstream bug or contribute fix.
 
+## Hypothesis Reassessment at Disagreement Points
+
+When models disagree, use confidence scores, forced alignment, or targeted re-recognition to pick the best reading. Prototype exploration in `scripts/prototype_realign.py`.
+
+### Confidence-based (no re-transcription needed)
+
+- **Parakeet per-token confidence.** Already available via `AlignedToken.confidence` (entropy-based, 0-1). Every wrong reading in our sample showed confidence < 0.95. Save in `asr_*.json` during transcription, use at ensemble time.
+
+- **Whisper per-word probability.** Already saved in `asr_*.json` as `probability` per word. Two independent confidence signals from two architectures.
+
+- **Whisper avg_logprob.** Segment-level log-probability. Coarser than per-word but always available.
+
+- **Confidence-weighted ensemble selection.** Combine parakeet + whisper confidence at disagreement points. Low confidence + other model disagrees → trust the other model. No LLM needed.
+
+### Forced alignment / hypothesis scoring
+
+- **Qwen3-ForcedAligner for hypothesis scoring.** `mlx-community/Qwen3-ForcedAligner-0.6B-8bit` — purpose-built aligner via mlx-audio. Feed each candidate reading + audio segment, compare alignment quality. Max 5 min audio.
+
+- **Parakeet TDT forced alignment.** TDT decoder exposes logits via joint network — architecturally feasible to score candidate token sequences against encoder output. Blocked on SentencePiece tokenizer extraction (not bundled in HF cache or .nemo archive).
+
+### Targeted re-recognition
+
+- **Prompt Whisper with alternate transcripts.** Use `initial_prompt` to bias Whisper toward each candidate reading. If prompting with "wedding" produces "wedding" but prompting with "wife" also produces "wedding", strong evidence for "wedding." Cheap and uses existing API.
+
+## New Models
+
+- **cohere-transcribe.** Best WER on Open ASR Leaderboard (5.42%), MLX-ready via mlx-audio (`mlx-community/cohere-transcribe-03-2026-mlx-8bit`), Apache 2.0. Would be a 4th independent model for ensembling. Logits computed internally in mlx-audio but not surfaced — patchable.
+
 ## Evaluation
 
 - Expand Rev16 eval to more files for statistical significance

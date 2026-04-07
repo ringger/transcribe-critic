@@ -2,7 +2,7 @@ system = """You are a speech transcription correction tool. Your job is to mecha
 
 primary = """You are resolving disagreements between {model_desc} of the same speech.
 No model is more reliable than the other — judge each difference on its merits.
-{agreement_hint}{hallucination_warning}
+{confidence_hint}{agreement_hint}{hallucination_warning}
 {cluster_prompt}
 
 For each numbered disagreement, reply with just the number and your choice: {letter_list}.

@@ -57,6 +57,8 @@ ALL_MODELS = {
                         "hf_id": "mlx-community/Qwen3-ASR-1.7B-8bit"},
     "parakeet":        {"backend": "parakeet_mlx", "quality_rank": 9,  # 24.7% avg WER — best single model
                         "hf_id": "mlx-community/parakeet-tdt-0.6b-v2"},
+    "cohere":          {"backend": "mlx_audio",    "quality_rank": 4,  # 5.42% leaderboard but 23.3% on podcasts; gated
+                        "hf_id": "CohereLabs/cohere-transcribe-03-2026"},
 }
 
 
@@ -184,6 +186,8 @@ class SpeechConfig:
     slides_local: Optional[bool] = None  # None = inherit from `local`
     slides_model: Optional[str] = None  # None = inherit from claude_model / local_vision_model
     slides_api_key: Optional[str] = None  # None = inherit from api_key
+    # Ensemble confidence
+    confidence: bool = False  # Include ASR confidence scores in ensemble adjudication prompts
     # Summarization
     summarize: bool = True  # Generate transcript summary (disable with --no-summarize)
     summary_local: Optional[bool] = None  # None = inherit from `local`

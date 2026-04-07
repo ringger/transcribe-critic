@@ -19,6 +19,8 @@ from transcribe_critic.transcription import (
     _ensemble_asr_transcripts,
     _filter_trivial_diffs,
     _format_reading,
+    _get_confidence_for_diff,
+    _load_model_confidence,
     _load_transcript_segments,
     _merge_pairwise_diffs,
     _parse_wdiff_diffs,
@@ -1049,7 +1051,7 @@ class TestResolveWhisperDiffs:
         }
 
         # Mock cluster resolution: choose base (B) for all diffs
-        def resolve_cluster(client, cfg, cluster, prompt, warning):
+        def resolve_cluster(client, cfg, cluster, prompt, warning, **kwargs):
             choices = []
             resolutions = {}
             for d in cluster:
@@ -1558,3 +1560,253 @@ class TestPatchHfConfig:
             _patch_hf_config("nonexistent-model")  # should not raise
 
 
+# ---------------------------------------------------------------------------
+# _load_model_confidence
+# ---------------------------------------------------------------------------
+
+class TestLoadModelConfidence:
+    def test_loads_whisper_probability(self, tmp_path):
+        """Reads Whisper per-word probability from JSON."""
+        json_path = tmp_path / "asr_small.json"
+        json_path.write_text(json.dumps({"segments": [{
+            "start": 0, "end": 5, "text": "hello world",
+            "words": [
+                {"word": " hello", "start": 0, "end": 1, "probability": 0.95},
+                {"word": " world", "start": 1, "end": 2, "probability": 0.88},
+            ],
+        }]}))
+        words = _load_model_confidence(json_path)
+        assert len(words) == 2
+        assert words[0]["word"] == "hello"
+        assert words[0]["confidence"] == 0.95
+        assert words[1]["confidence"] == 0.88
+
+    def test_loads_parakeet_confidence(self, tmp_path):
+        """Reads parakeet per-token confidence and merges subwords."""
+        json_path = tmp_path / "asr_parakeet.json"
+        json_path.write_text(json.dumps({"segments": [{
+            "start": 0, "end": 5, "text": " Wedding cake",
+            "words": [
+                {"word": " We", "start": 0, "end": 0.1, "confidence": 0.95},
+                {"word": "d", "start": 0.1, "end": 0.2, "confidence": 0.80},
+                {"word": "ding", "start": 0.2, "end": 0.4, "confidence": 0.99},
+                {"word": " c", "start": 0.5, "end": 0.6, "confidence": 0.97},
+                {"word": "ake", "start": 0.6, "end": 0.8, "confidence": 0.98},
+            ],
+        }]}))
+        words = _load_model_confidence(json_path)
+        assert len(words) == 2
+        assert words[0]["word"] == "Wedding"
+        assert words[0]["confidence"] == 0.80  # min of subword tokens
+        assert words[1]["word"] == "cake"
+        assert words[1]["confidence"] == 0.97
+
+    def test_missing_file_returns_empty(self):
+        """Returns empty list for missing or None path."""
+        assert _load_model_confidence(Path("/nonexistent")) == []
+        assert _load_model_confidence(None) == []
+
+    def test_no_confidence_returns_none_values(self, tmp_path):
+        """Words without probability/confidence fields get None."""
+        json_path = tmp_path / "asr_qwen.json"
+        json_path.write_text(json.dumps({"segments": [{
+            "start": 0, "end": 5, "text": "hello",
+            "words": [{"word": " hello", "start": 0, "end": 1}],
+        }]}))
+        words = _load_model_confidence(json_path)
+        assert len(words) == 1
+        assert words[0]["confidence"] is None
+
+
+# ---------------------------------------------------------------------------
+# _get_confidence_for_diff
+# ---------------------------------------------------------------------------
+
+class TestGetConfidenceForDiff:
+    def test_returns_min_confidence(self):
+        """Returns minimum confidence across the word span."""
+        word_index = [
+            {"word": "a", "start": 0, "end": 1, "confidence": 0.95},
+            {"word": "big", "start": 1, "end": 2, "confidence": 0.70},
+            {"word": "cat", "start": 2, "end": 3, "confidence": 0.99},
+        ]
+        assert _get_confidence_for_diff(word_index, "big cat", 1, 2) == 0.70
+
+    def test_single_word(self):
+        word_index = [
+            {"word": "hello", "start": 0, "end": 1, "confidence": 0.88},
+        ]
+        assert _get_confidence_for_diff(word_index, "hello", 0, 1) == 0.88
+
+    def test_no_confidence_returns_none(self):
+        word_index = [
+            {"word": "hello", "start": 0, "end": 1, "confidence": None},
+        ]
+        assert _get_confidence_for_diff(word_index, "hello", 0, 1) is None
+
+    def test_empty_index_returns_none(self):
+        assert _get_confidence_for_diff([], "hello", 0, 1) is None
+
+    def test_empty_text_returns_none(self):
+        word_index = [{"word": "x", "start": 0, "end": 1, "confidence": 0.9}]
+        assert _get_confidence_for_diff(word_index, "", 0, 1) is None
+
+
+# ---------------------------------------------------------------------------
+# _build_cluster_prompt with confidence
+# ---------------------------------------------------------------------------
+
+class TestBuildClusterPromptWithConfidence:
+    def test_includes_confidence_annotations(self):
+        """Multi-way prompt shows [conf=X%] when confidence data is available."""
+        cluster = [
+            {"type": "substitution", "b_pos": 5, "b_len": 1, "a_pos": 5, "a_len": 1,
+             "readings": {"small": "wife", "medium": "wedding"}},
+        ]
+        base_words = "this is my big fat Greek wedding wow".split()
+
+        # Confidence: small=80%, medium=99%
+        model_confidence = {
+            "small": [{"word": w, "start": i, "end": i+1, "confidence": 0.95}
+                      for i, w in enumerate(base_words)],
+            "medium": [{"word": w, "start": i, "end": i+1, "confidence": 0.95}
+                       for i, w in enumerate(base_words)],
+        }
+        # Set low confidence for small at position 5
+        model_confidence["small"][5]["confidence"] = 0.80
+        # Set high confidence for medium at position 5
+        model_confidence["medium"][5]["confidence"] = 0.99
+
+        prompt = _build_cluster_prompt(cluster, base_words, context_words=3,
+                                       model_confidence=model_confidence)
+        assert "[conf=80%]" in prompt
+        assert "[conf=99%]" in prompt
+
+    def test_no_confidence_omits_annotations(self):
+        """Without confidence data, prompt has no [conf=] annotations."""
+        cluster = [
+            {"type": "substitution", "b_pos": 2, "b_len": 1, "a_pos": 2, "a_len": 1,
+             "readings": {"small": "cat", "medium": "dog"}},
+        ]
+        base_words = "the quick dog sat".split()
+        prompt = _build_cluster_prompt(cluster, base_words, context_words=2)
+        assert "conf=" not in prompt
+
+    def test_partial_confidence(self):
+        """Only models with confidence data get annotations."""
+        cluster = [
+            {"type": "substitution", "b_pos": 2, "b_len": 1, "a_pos": 2, "a_len": 1,
+             "readings": {"small": "cat", "medium": "dog"}},
+        ]
+        base_words = "the quick dog sat".split()
+        # Only medium has confidence
+        model_confidence = {
+            "medium": [{"word": w, "start": i, "end": i+1, "confidence": 0.92}
+                       for i, w in enumerate(base_words)],
+        }
+        prompt = _build_cluster_prompt(cluster, base_words, context_words=2,
+                                       model_confidence=model_confidence)
+        # medium should have conf, small should not
+        assert "[conf=92%]" in prompt
+        # Only one conf annotation
+        assert prompt.count("[conf=") == 1
+
+
+# ---------------------------------------------------------------------------
+# _call_and_parse_cluster with confidence hint
+# ---------------------------------------------------------------------------
+
+class TestCallAndParseClusterConfidence:
+    def test_includes_confidence_hint_when_flagged(self):
+        """When has_confidence=True, prompt includes confidence explanation."""
+        from transcribe_critic.transcription import _call_and_parse_cluster
+
+        client = MagicMock()
+        config = SpeechConfig(url="x", output_dir=Path("/tmp"), local=True)
+        cluster = [
+            {"type": "substitution", "b_pos": 1, "b_len": 1,
+             "readings": {"small": "dog", "medium": "cat"}},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="1. A")]
+        mock_response.usage = MagicMock(input_tokens=10, output_tokens=5)
+
+        with patch("transcribe_critic.transcription.llm_call_with_retry",
+                   return_value=mock_response) as mock_llm:
+            _call_and_parse_cluster(
+                client, config, cluster, "prompt", "",
+                has_confidence=True)
+            # Check the prompt sent to the LLM
+            call_args = mock_llm.call_args
+            messages = call_args.kwargs.get("messages", call_args[1].get("messages", []))
+            prompt_text = messages[0]["content"] if messages else ""
+            assert "acoustic confidence" in prompt_text
+
+    def test_no_confidence_hint_by_default(self):
+        """Without has_confidence, no confidence explanation in prompt."""
+        from transcribe_critic.transcription import _call_and_parse_cluster
+
+        client = MagicMock()
+        config = SpeechConfig(url="x", output_dir=Path("/tmp"), local=True)
+        cluster = [
+            {"type": "substitution", "b_pos": 1, "b_len": 1,
+             "readings": {"small": "dog", "medium": "cat"}},
+        ]
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="1. A")]
+        mock_response.usage = MagicMock(input_tokens=10, output_tokens=5)
+
+        with patch("transcribe_critic.transcription.llm_call_with_retry",
+                   return_value=mock_response) as mock_llm:
+            _call_and_parse_cluster(
+                client, config, cluster, "prompt", "")
+            call_args = mock_llm.call_args
+            messages = call_args.kwargs.get("messages", call_args[1].get("messages", []))
+            prompt_text = messages[0]["content"] if messages else ""
+            assert "acoustic confidence" not in prompt_text
+
+
+# ---------------------------------------------------------------------------
+# _ensemble_asr_transcripts loads confidence from JSON
+# ---------------------------------------------------------------------------
+
+class TestEnsembleLoadsConfidence:
+    @patch("transcribe_critic.transcription._resolve_whisper_diffs")
+    @patch("transcribe_critic.transcription.create_llm_client")
+    def test_passes_confidence_to_resolver(self, mock_client, mock_resolve, tmp_path):
+        """Ensemble loads confidence from JSON and passes to _resolve_whisper_diffs."""
+        mock_resolve.return_value = "resolved text"
+
+        config = SpeechConfig(url="x", output_dir=tmp_path, skip_existing=False,
+                              models=["small", "medium"], confidence=True)
+        data = SpeechData(audio_path=tmp_path / "audio.mp3")
+        data.audio_path.write_text("fake")
+
+        # Create transcripts with confidence in JSON
+        for model, prob in [("small", 0.88), ("medium", 0.95)]:
+            txt = tmp_path / f"asr_{model}.txt"
+            txt.write_text(f"{model} transcript text here")
+            jp = tmp_path / f"asr_{model}.json"
+            jp.write_text(json.dumps({"segments": [{
+                "start": 0, "end": 5, "text": f"{model} transcript text here",
+                "words": [
+                    {"word": f" {model}", "start": 0, "end": 1, "probability": prob},
+                    {"word": " transcript", "start": 1, "end": 2, "probability": prob},
+                    {"word": " text", "start": 2, "end": 3, "probability": prob},
+                    {"word": " here", "start": 3, "end": 4, "probability": prob},
+                ],
+            }]}))
+            data.asr_transcripts[model] = {"txt": txt, "json": jp}
+
+        _ensemble_asr_transcripts(config, data)
+
+        # Check that _resolve_whisper_diffs was called with model_confidence
+        assert mock_resolve.called
+        call_kwargs = mock_resolve.call_args.kwargs
+        assert "model_confidence" in call_kwargs
+        conf = call_kwargs["model_confidence"]
+        assert "small" in conf
+        assert "medium" in conf
+        assert conf["small"][0]["confidence"] == 0.88

@@ -690,7 +690,6 @@ Examples:
                         help="Separate API key for merging/ensembling (default: same as --api-key)")
     llm_group.add_argument("--confidence", action="store_true",
                         help="Include ASR confidence scores in ensemble adjudication prompts")
-
     # Diarization
     diarize_group = parser.add_argument_group("diarization")
     diarize_group.add_argument("--no-diarize", action="store_false", dest="diarize",

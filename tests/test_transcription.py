@@ -1401,6 +1401,45 @@ class TestApplyResolutionsPreservesBase:
         result = _apply_resolutions(base_words, diffs, resolutions)
         assert result == "Hello, world! This is a test."
 
+    def test_insertion_does_not_duplicate_adjacent_word(self):
+        """Inserting a word identical to the preceding base word should deduplicate."""
+        base_words = "he had concocted massive fraud schemes".split()
+        # Diff: insertion of "concocted" at position 3 (right after base "concocted")
+        diffs = [{"type": "deletion", "a_text": "concocted", "b_text": "",
+                  "a_pos": 3, "b_pos": 3, "a_len": 1, "b_len": 0}]
+        resolutions = {id(diffs[0]): "concocted"}
+        result = _apply_resolutions(base_words, diffs, resolutions)
+        assert "concocted concocted" not in result
+        assert "concocted massive" in result
+
+    def test_overlapping_diffs_skip_second(self):
+        """When two diffs overlap at the same position, the first applied wins."""
+        base_words = "these documents prove to be forgeries some".split()
+        # Two diffs at b_pos=2: one replacing 1 word, one replacing 4
+        diff1 = {"type": "substitution", "a_text": "proved", "b_text": "prove",
+                 "a_pos": 2, "b_pos": 2, "a_len": 1, "b_len": 1}
+        diff2 = {"type": "substitution", "a_text": "proved re-forgeries,",
+                 "b_text": "prove to be forgeries,",
+                 "a_pos": 2, "b_pos": 2, "a_len": 2, "b_len": 4}
+        diffs = [diff1, diff2]
+        # Both resolved — first one wins since it starts at same position
+        resolutions = {id(diff1): "proved", id(diff2): "proved re-forgeries,"}
+        result = _apply_resolutions(base_words, diffs, resolutions)
+        # Should not have "prove proved" or double text
+        assert "prove proved" not in result
+        assert "prove prove" not in result
+
+    def test_substitution_allows_repeated_word(self):
+        """Substitutions should not be deduplicated — only insertions."""
+        base_words = "she said said goodbye".split()
+        diffs = [{"type": "substitution", "a_text": "really", "b_text": "said",
+                  "a_pos": 2, "b_pos": 2, "a_len": 1, "b_len": 1}]
+        # LLM chose to keep "said" — this is a substitution, not insertion
+        resolutions = {id(diffs[0]): "said"}
+        result = _apply_resolutions(base_words, diffs, resolutions)
+        # "said said" is legitimate here (the LLM explicitly chose it)
+        assert result == "she said said goodbye"
+
 
 # ---------------------------------------------------------------------------
 # _ensure_wav

@@ -706,6 +706,7 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
     # Collect all resolutions: list of (diff, chosen_text) pairs
     resolutions = {}  # diff index in all_diffs → chosen text
     clusters_reused = 0
+    has_conf = model_confidence is not None
 
     for cluster_idx, cluster in enumerate(clusters):
         checkpoint_path = ensemble_dir / f"cluster_{cluster_idx:03d}.json"
@@ -720,7 +721,6 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
                     diff = cluster[i]
                     diff_key = id(diff)
                     if "readings" in diff:
-                        # Multi-way: map letter to reading
                         readings_list = list(diff["readings"].values())
                         letter_idx = ord(choice[0]) - ord("A") if choice and choice[0].isalpha() else -1
                         if 0 <= letter_idx < len(readings_list):
@@ -729,7 +729,6 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
                         else:
                             chosen = readings_list[-1] if readings_list[-1] else "(omit)"
                     else:
-                        # Legacy 2-way
                         if choice == "A":
                             chosen = diff["a_text"] if diff["a_text"] else "(omit)"
                         elif choice == "B":
@@ -740,24 +739,22 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
             clusters_reused += 1
             continue
 
-        print(f"  Resolving cluster {cluster_idx + 1}/{len(clusters)} ({len(cluster)} diffs)...")
+        print(f"  Resolving cluster {cluster_idx + 1}/{len(clusters)} "
+              f"({len(cluster)} diffs)...")
 
-        # Build prompt for this cluster
         cluster_prompt = _build_cluster_prompt(
             cluster, base_words,
             context_words=config.merge_diff_context_words,
             model_confidence=model_confidence,
         )
 
-        has_conf = model_confidence is not None
         cluster_choices, cluster_resolutions = _call_and_parse_cluster(
             client, merge_cfg, cluster, cluster_prompt, hallucination_warning,
             has_confidence=has_conf,
         )
 
-        # If all diffs unresolved, retry without context (may help with content refusals)
+        # If all diffs unresolved, retry without context
         if all(c is None for c in cluster_choices):
-            # Build disagreements-only prompt (strip context)
             diff_lines = []
             for i, d in enumerate(cluster, 1):
                 if "readings" in d:
@@ -777,17 +774,13 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
                 "DISAGREEMENTS:\n" + "\n".join(diff_lines)
                 + ensemble_prompts["retry_suffix"]
             )
-
             print(f"    Retrying cluster {cluster_idx + 1} without context...")
             cluster_choices, cluster_resolutions = _call_and_parse_cluster(
                 client, merge_cfg, cluster, minimal_prompt, hallucination_warning,
             )
 
-        # Store resolutions
         for diff_key, chosen in cluster_resolutions.items():
             resolutions[diff_key] = chosen
-
-        # Save checkpoint
         _save_json(checkpoint_path, {"choices": cluster_choices})
 
     if clusters_reused:
@@ -795,10 +788,8 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
 
     # Step 4: Apply resolutions to base text
     resolved_text = _apply_resolutions(base_words, all_diffs, resolutions)
-
-    resolved_words = len(resolved_text.split())
     applied = sum(1 for d in all_diffs if id(d) in resolutions)
-    print(f"  Applied {applied}/{total_diffs} resolutions ({resolved_words} words)")
+    print(f"  Applied {applied}/{total_diffs} resolutions ({len(resolved_text.split())} words)")
 
     return resolved_text
 
@@ -822,6 +813,10 @@ def _apply_resolutions(base_words: list[str], diffs: list[dict],
         b_start = d["b_pos"]
         b_len = d["b_len"]
 
+        # Skip diffs that overlap with a previously applied diff
+        if b_start < pos:
+            continue
+
         # Add base text before this diff
         if pos < b_start:
             result.extend(base_words[pos:b_start])
@@ -832,7 +827,15 @@ def _apply_resolutions(base_words: list[str], diffs: list[dict],
             if chosen.lower().strip("()") == "omit":
                 pass  # Don't add anything
             else:
-                result.extend(chosen.split())
+                chosen_words = chosen.split()
+                # Prevent adjacent word duplication (e.g., inserting "concocted"
+                # next to an existing "concocted" in the base text)
+                if (chosen_words and result
+                        and chosen_words[0].lower().rstrip(".,!?;:")
+                        == result[-1].lower().rstrip(".,!?;:")
+                        and b_len == 0):  # only for insertions
+                    chosen_words = chosen_words[1:]
+                result.extend(chosen_words)
         else:
             # No resolution — keep base text
             if b_len > 0:

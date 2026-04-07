@@ -1,60 +1,28 @@
 # Backlog
 
-## Architecture / Refactoring
-
-- ~~**Remove Whisper-centric naming throughout codebase.**~~ ✅ Done. Unified `ALL_MODELS` registry, `--models` CLI flag (old flags deprecated), `asr_*.txt` file naming with backward-compat read-both, `transcribe-critic-migrate` utility. See commit history.
-
-- ~~**Ensemble should respect requested models, not discover from disk.**~~ ✅ Done. `_ensemble_asr_transcripts()` now filters `data.asr_transcripts` to only models in `config.models`, with a log message for skipped models.
+See `docs/experiments.md` for results of completed experiments.
 
 ## Cross-Architecture Ensemble Improvements
-
-The wdiff-based ensemble degrades (31-32% WER) when mixing architecturally diverse models, even though individual models score well (24-26%). Root cause: wdiff alignment breaks on structurally different text (punctuation, capitalization, word boundaries, name list ordering).
-
-- ~~**Normalize before diffing.**~~ ✅ Done. `_normalize_for_comparison()` in merge.py strips punctuation, lowercases, normalizes whitespace before wdiff alignment.
 
 - **Timestamp-guided alignment.** Align by time window (e.g., 10s segments) using word timestamps from parakeet/whisper instead of LCS. Prevents name-list garbling. More principled but bigger lift.
 
 - **Sentence-level-first alignment.** Split into sentences first (using parakeet's sentence boundaries), align sentences across models, then wdiff within matched sentences. Keeps damage local.
 
-- **Confidence-weighted selection.** Use parakeet's per-word confidence scores. Take parakeet's word unless confidence is low AND another model disagrees. No LLM needed.
-
 - **Revisit LLM-based chunk merge.** Give LLM full parallel texts in small chunks. Failed with Whisper-only (exp 1-9) but stronger models + more diverse signal might work now.
 
 ## Model Issues
 
-- **Granite-speech is unusable on podcast audio.** 105% WER due to massive hallucination (801 loops on one 2h file). Leaderboard WER (5.52%) doesn't transfer. Consider removing from registry or flagging as experimental.
+- **Granite-speech is unusable on podcast audio.** Consider removing from registry or flagging as experimental.
 
-- **Qwen3-ASR MP3 truncation.** mlx-audio silently truncates long MP3 files. Workaround in place (WAV conversion via `_ensure_wav()`). Should file upstream bug.
+- **Qwen3-ASR MP3 truncation.** mlx-audio silently truncates long MP3 files. Workaround in place (`_ensure_wav()`). Should file upstream bug.
 
 - **Qwen3-ASR token limit.** Default `max_tokens=8192` insufficient for 5-min chunks. Workaround in place (`max_tokens=32768`). Should file upstream bug or contribute fix.
 
 ## Hypothesis Reassessment at Disagreement Points
 
-When models disagree, use confidence scores, forced alignment, or targeted re-recognition to pick the best reading. Prototype exploration in `scripts/prototype_realign.py`.
-
-### Confidence-based (no re-transcription needed)
-
-- **Parakeet per-token confidence.** Already available via `AlignedToken.confidence` (entropy-based, 0-1). Every wrong reading in our sample showed confidence < 0.95. Save in `asr_*.json` during transcription, use at ensemble time.
-
-- **Whisper per-word probability.** Already saved in `asr_*.json` as `probability` per word. Two independent confidence signals from two architectures.
-
-- **Whisper avg_logprob.** Segment-level log-probability. Coarser than per-word but always available.
-
-- **Confidence-weighted ensemble selection.** Combine parakeet + whisper confidence at disagreement points. Low confidence + other model disagrees → trust the other model. No LLM needed.
-
-### Forced alignment / hypothesis scoring
-
-- **Qwen3-ForcedAligner for hypothesis scoring.** `mlx-community/Qwen3-ForcedAligner-0.6B-8bit` — purpose-built aligner via mlx-audio. Feed each candidate reading + audio segment, compare alignment quality. Max 5 min audio.
-
 - **Parakeet TDT forced alignment.** TDT decoder exposes logits via joint network — architecturally feasible to score candidate token sequences against encoder output. Blocked on SentencePiece tokenizer extraction (not bundled in HF cache or .nemo archive).
 
-### Targeted re-recognition
-
 - **Prompt Whisper with alternate transcripts.** Use `initial_prompt` to bias Whisper toward each candidate reading. If prompting with "wedding" produces "wedding" but prompting with "wife" also produces "wedding", strong evidence for "wedding." Cheap and uses existing API.
-
-## New Models
-
-- **cohere-transcribe.** Best WER on Open ASR Leaderboard (5.42%), MLX-ready via mlx-audio (`mlx-community/cohere-transcribe-03-2026-mlx-8bit`), Apache 2.0. Would be a 4th independent model for ensembling. Logits computed internally in mlx-audio but not surfaced — patchable.
 
 ## Evaluation
 

@@ -10,6 +10,8 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Revisit LLM-based chunk merge.** Give LLM full parallel texts in small chunks. Failed with Whisper-only (exp 1-9) but stronger models + more diverse signal might work now.
 
+- **Ripple diff resolution.** Resolve diffs sequentially within clusters, re-running wdiff after each resolution so subsequent diffs have correct positions and updated context. Initial attempt using position-shift patching failed (corrupted text). Needs a ground-up design that re-diffs after each applied resolution rather than adjusting offsets.
+
 ## Model Issues
 
 - **Granite-speech is unusable on podcast audio.** Consider removing from registry or flagging as experimental.
@@ -26,6 +28,7 @@ See `docs/experiments.md` for results of completed experiments.
 
 ## Evaluation
 
+- **Eval scorer should discover all asr_*.txt files.** Currently `discover_transcript_files()` only returns models in `ALL_MODELS`. Should also pick up `asr_merged.txt`, `asr_realigned.txt`, etc. for comparison scoring.
 - Expand Rev16 eval to more files for statistical significance
 - Test 2-way ensembles: parakeet + distil-large-v3, parakeet + qwen3-asr
 - Test with a local adjudicator closer to Sonnet quality (e.g., Llama 3.3 70B, Qwen 2.5 72B)

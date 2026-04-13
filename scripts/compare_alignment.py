@@ -44,11 +44,15 @@ def _fmt_diff(d: dict, max_width: int = 40) -> str:
     return f'b_pos={d["b_pos"]:>4} {d["type"]:12s}: "{a}" vs "{b}"'
 
 
-def compare(output_dir: Path, pad_words: int = 5) -> dict:
+def compare(output_dir: Path, pad_words: int = 5,
+            models: tuple[str, str] | None = None) -> dict:
     """Run comparison and return results dict."""
     config = SpeechConfig(url="local", output_dir=output_dir)
 
-    base_model, other_model = _discover_model_pair(output_dir)
+    if models:
+        base_model, other_model = models
+    else:
+        base_model, other_model = _discover_model_pair(output_dir)
     base_text = (output_dir / f"asr_{base_model}.txt").read_text()
     other_text = (output_dir / f"asr_{other_model}.txt").read_text()
     base_json = output_dir / f"asr_{base_model}.json"
@@ -115,13 +119,23 @@ def main():
     parser.add_argument("output_dir", type=Path, help="Directory with asr_*.txt and asr_*.json files")
     parser.add_argument("--pad-words", type=int, default=5,
                         help="Boundary padding words (default: 5)")
+    parser.add_argument("--models", type=str, default=None,
+                        help="Comma-separated model pair: base,other (default: auto-discover)")
     args = parser.parse_args()
+
+    models = None
+    if args.models:
+        parts = [m.strip() for m in args.models.split(",")]
+        if len(parts) != 2:
+            print("Error: --models requires exactly 2 comma-separated names", file=sys.stderr)
+            sys.exit(1)
+        models = (parts[0], parts[1])
 
     if not args.output_dir.exists():
         print(f"Error: {args.output_dir} does not exist", file=sys.stderr)
         sys.exit(1)
 
-    compare(args.output_dir, pad_words=args.pad_words)
+    compare(args.output_dir, pad_words=args.pad_words, models=models)
 
 
 if __name__ == "__main__":

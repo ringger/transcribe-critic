@@ -88,6 +88,44 @@ Leaderboard benchmarks (clean, read speech) do not predict podcast performance. 
 
 ---
 
+## Sentence-Level Alignment (2026-04-13)
+
+Prototype behind `--sentence-align` flag. Splits transcripts into sentences using ASR JSON timestamps before wdiff, with 5-word boundary padding to prevent edge artifacts. Comparison script: `scripts/compare_alignment.py`.
+
+### Diff comparison: parakeet vs distil-large-v3
+
+| File | Words | Baseline diffs | SA diffs | Common | Only BL | Only SA |
+|------|-------|----------------|----------|--------|---------|---------|
+| 30s fixture | 73 | 4 | 4 | 4 | 0 | 0 |
+| file14 (3min) | 397 | 22 | 23 | 20 | 2 | 3 |
+| 10min extract | 1,369 | 20 | 20 | 20 | 0 | 0 |
+| file9 (50min) | 9,872 | 188 | 198 | 182 | 6 | 16 |
+| file3 (132min) | 23,916 | 1,002 | 1,017 | 962 | 40 | 55 |
+| file4 (126min) | 23,554 | 1,087 | 1,109 | 1,057 | 30 | 52 |
+
+~96% diff overlap on long files. SA-only diffs are mostly filler words ("Like,", "Yeah.") that whole-text LCS absorbs differently. No spurious boundary artifacts with padding.
+
+### Qwen3-ASR segment granularity issue
+
+Qwen3-ASR produces only ~10 segments for a 50min file (~1000 words each). Pairing with parakeet's 624 fine-grained sentences caused 2-3x diff explosion (560 SA diffs vs 203 baseline). Sentence alignment needs reasonably granular segments from both models.
+
+### Assessment
+
+Sentence-level alignment produces near-identical diffs to whole-text alignment on all files tested. The original motivation — preventing alignment cascade on long audio (e.g., name-list garbling) — was not triggered on any Rev16 podcast, even at 132 min / 24K words. Whole-text wdiff handled these files without cascading.
+
+The prototype works correctly and doesn't regress, but we have not yet found audio where it demonstrably helps. The cascade problem may be rare with the parakeet + distil-large-v3 pair, or may require specific content types (e.g., dense name lists) not present in Rev16.
+
+**Decision:** keep behind `--sentence-align` flag, do not make default. The flag is available if cascade problems surface on specific audio. Worth revisiting if a triggering case is found.
+
+### Test clip sources
+
+- 30s: `tests/fixtures/tao_30s.mp3` (project fixture)
+- 3min: Rev16 file14 — "Coming Soon: Season 2"
+- 10min: First 10min of Rev16 file27 — "What We Own is Sacred Because We Are Sacred" (ffmpeg trim)
+- 50min/132min/126min: Rev16 files 9/3/4 (pre-existing transcripts in `eval-runs/rev16-asr-backends/`)
+
+---
+
 ## Key Takeaways
 
 1. **Parakeet standalone is hard to beat on podcast audio.** No ensemble method tested improves over parakeet's 20.4-27.3% WER across Rev16 files.

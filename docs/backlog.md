@@ -6,9 +6,9 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Timestamp-guided alignment.** Align by time window (e.g., 10s segments) using word timestamps from parakeet/whisper instead of LCS. Prevents name-list garbling. More principled but bigger lift.
 
-- **Sentence-level-first alignment.** Prototype implemented behind `--sentence-align` flag. Needs eval to confirm it helps. Known risk: premature commitment to sentence boundaries can create spurious diffs when a word lands on different sides of the boundary in different models. Two mitigations if boundary artifacts appear:
-  - *Boundary padding*: include a few words from adjacent base sentences in each wdiff, creating overlap that lets boundary words align. Discard diffs in the padding zone.
-  - *Complementary diff cancellation*: detect insertion+deletion of the same word at adjacent sentence boundaries and cancel them out.
+- **Sentence-level-first alignment.** Prototype implemented behind `--sentence-align` flag with boundary padding (5 words). Eval on Rev16 (50min–132min) shows 96% diff overlap with baseline; no spurious boundary artifacts. Remaining differences are mostly filler words ("Like,", "Yeah.") that whole-text LCS absorbs differently. Still needs end-to-end WER comparison to confirm it helps on cascade-prone audio.
+  - *Limitation*: requires reasonably granular segments from both models. Qwen3-ASR produces only ~10 segments for a 50min file (~1000 words each), causing 2-3x diff explosion when paired with parakeet's fine-grained sentences. Sentence alignment should fall back to whole-text for models with coarse segments.
+  - *Complementary diff cancellation*: detect insertion+deletion of the same word at adjacent sentence boundaries and cancel them out. Not yet needed — boundary padding handles the cases seen so far.
 
 - **Revisit LLM-based chunk merge.** Give LLM full parallel texts in small chunks. Failed with Whisper-only (exp 1-9) but stronger models + more diverse signal might work now.
 

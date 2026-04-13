@@ -52,7 +52,8 @@ ALL_MODELS = {
     "tiny":            {"backend": "whisper", "quality_rank": 1},
     # Non-Whisper ASR models
     "granite-speech":  {"backend": "mlx_audio",    "quality_rank": 1,  # 105% WER — unusable on podcasts
-                        "hf_id": "mlx-community/granite-4.0-1b-speech-8bit"},
+                        "hf_id": "mlx-community/granite-4.0-1b-speech-8bit",
+                        "experimental": True},
     "qwen3-asr":       {"backend": "mlx_audio",    "quality_rank": 8,  # 25.3% avg WER on Rev16
                         "hf_id": "mlx-community/Qwen3-ASR-1.7B-8bit"},
     "parakeet":        {"backend": "parakeet_mlx", "quality_rank": 9,  # 24.7% avg WER — best single model

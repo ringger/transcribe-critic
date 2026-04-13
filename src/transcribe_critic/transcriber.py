@@ -637,9 +637,11 @@ Examples:
     transcription_group = parser.add_argument_group("transcription")
     _default_models = ",".join(DEFAULT_MODELS)
     _all_options = ", ".join(ALL_MODELS.keys())
+    _experimental = [m for m, e in ALL_MODELS.items() if e.get("experimental")]
+    _exp_note = f" Experimental: {', '.join(_experimental)}." if _experimental else ""
     transcription_group.add_argument("--models", default=None,
                         help=f"ASR model(s) to use, comma-separated (default: {_default_models}). "
-                             f"Options: {_all_options}. "
+                             f"Options: {_all_options}.{_exp_note} "
                              "Multiple models enables ensembling for better accuracy")
     # Removed flags — hard error with migration guidance
     transcription_group.add_argument("--whisper-models", default=None, dest="whisper_models",
@@ -788,6 +790,8 @@ Examples:
                 print(f"Unknown model: {m}")
                 print(f"Valid options: {', '.join(ALL_MODELS.keys())}")
                 sys.exit(1)
+            if ALL_MODELS[m].get("experimental"):
+                print(f"Warning: '{m}' is experimental and may produce poor results on some audio.")
     else:
         models = list(DEFAULT_MODELS)
 

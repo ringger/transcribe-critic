@@ -14,6 +14,7 @@ from conftest import make_openai_response
 from transcribe_critic.shared import (
     SpeechConfig,
     SpeechData,
+    ALL_MODELS,
     ASR_MODEL_REGISTRY,
     WHISPER_QUALITY_RANK,
     get_model_quality_rank,
@@ -970,6 +971,13 @@ class TestASRModelRegistry:
         valid = {"parakeet_mlx", "mlx_audio"}
         for name, entry in ASR_MODEL_REGISTRY.items():
             assert entry["backend"] in valid, f"{name} has unknown backend {entry['backend']}"
+
+    def test_granite_speech_is_experimental(self):
+        assert ALL_MODELS["granite-speech"].get("experimental") is True
+
+    def test_non_experimental_models_lack_flag(self):
+        for name in ("parakeet", "qwen3-asr", "distil-large-v3"):
+            assert not ALL_MODELS[name].get("experimental"), f"{name} should not be experimental"
 
 
 class TestGetModelQualityRank:

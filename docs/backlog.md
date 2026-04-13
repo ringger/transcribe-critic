@@ -14,8 +14,6 @@ See `docs/experiments.md` for results of completed experiments.
 
 ## Model Issues
 
-- **Granite-speech is unusable on podcast audio.** Consider removing from registry or flagging as experimental.
-
 - **Qwen3-ASR MP3 truncation.** mlx-audio silently truncates long MP3 files. Workaround in place (`_ensure_wav()`). Should file upstream bug.
 
 - **Qwen3-ASR token limit.** Default `max_tokens=8192` insufficient for 5-min chunks. Workaround in place (`max_tokens=32768`). Should file upstream bug or contribute fix.

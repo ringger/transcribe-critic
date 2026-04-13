@@ -916,6 +916,18 @@ class TestMainCLI:
             with pytest.raises(SystemExit):
                 main()
 
+    def test_experimental_model_warns(self, capsys):
+        import sys
+        from transcribe_critic.transcriber import main
+        with patch.object(sys, "argv",
+                          ["transcribe-critic", "https://example.com/v",
+                           "--models", "granite-speech", "--dry-run"]):
+            with pytest.raises(SystemExit):
+                main()
+        out = capsys.readouterr().out
+        assert "experimental" in out.lower()
+        assert "granite-speech" in out
+
     def test_removed_whisper_models_flag_exits(self, capsys):
         import sys
         from transcribe_critic.transcriber import main

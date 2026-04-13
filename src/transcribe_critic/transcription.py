@@ -284,6 +284,163 @@ def _filter_trivial_diffs(diffs: list[dict]) -> list[dict]:
     return filtered
 
 
+# ---------------------------------------------------------------------------
+# Sentence-level alignment helpers
+# ---------------------------------------------------------------------------
+
+def _load_segments_with_offsets(json_path: Path) -> list[dict]:
+    """Load sentence/segment boundaries with cumulative word offsets.
+
+    Returns list of {start, end, text, word_offset} dicts where word_offset
+    is the index of this segment's first word in the full transcript.
+    """
+    if not json_path or not json_path.exists():
+        return []
+    with open(json_path) as f:
+        data = json.load(f)
+    segments = []
+    word_offset = 0
+    for seg in data.get("segments", []):
+        text = seg.get("text", "").strip()
+        if not text:
+            continue
+        segments.append({
+            "start": seg["start"],
+            "end": seg["end"],
+            "text": text,
+            "word_offset": word_offset,
+        })
+        word_offset += len(text.split())
+    return segments
+
+
+def _match_segments_by_time(
+    base_segments: list[dict],
+    other_segments: list[dict],
+) -> list[tuple[dict, str, int]]:
+    """Match each base sentence to overlapping segments from another model.
+
+    Returns (base_segment, matched_other_text, other_word_offset) tuples.
+    Uses a sliding window for O(n+m) efficiency.
+    """
+    if not base_segments or not other_segments:
+        return []
+
+    results = []
+    other_idx = 0  # sliding window start
+
+    for base_seg in base_segments:
+        bs, be = base_seg["start"], base_seg["end"]
+        matched_texts = []
+        first_other_offset = None
+
+        # Advance past other segments that end before this base segment starts
+        while other_idx > 0 and other_segments[other_idx - 1]["end"] > bs:
+            other_idx -= 1  # back up if needed for overlapping segments
+
+        j = other_idx
+        while j < len(other_segments):
+            os_, oe = other_segments[j]["start"], other_segments[j]["end"]
+            if os_ >= be:
+                break  # past this base segment
+            if oe > bs:
+                # Overlap exists
+                matched_texts.append(other_segments[j]["text"])
+                if first_other_offset is None:
+                    first_other_offset = other_segments[j]["word_offset"]
+            j += 1
+
+        if matched_texts:
+            results.append((
+                base_seg,
+                " ".join(matched_texts),
+                first_other_offset,
+            ))
+
+    return results
+
+
+def _pairwise_diffs_by_sentence(
+    base_segments: list[dict],
+    other_json_path: Path,
+    config: SpeechConfig,
+    pad_words: int = 5,
+) -> list[dict]:
+    """Compute pairwise diffs sentence-by-sentence using timestamp alignment.
+
+    Loads segments from both models' JSON, matches by timestamp overlap,
+    runs _parse_wdiff_diffs per sentence pair, and offsets positions to
+    global word indices.
+
+    Boundary padding: each base sentence is extended with ``pad_words``
+    words from adjacent sentences before diffing. Diffs in the padding
+    zones are discarded, preventing spurious diffs at sentence boundaries.
+    """
+    other_segments = _load_segments_with_offsets(other_json_path)
+    if not other_segments:
+        return []
+
+    # Build padded base texts and expanded time windows for matching
+    padded_base = []
+    for i, seg in enumerate(base_segments):
+        words = seg["text"].split()
+        prefix_pad = []
+        suffix_pad = []
+        # Grab trailing words from previous segment
+        if i > 0 and pad_words > 0:
+            prev_words = base_segments[i - 1]["text"].split()
+            prefix_pad = prev_words[-pad_words:]
+        # Grab leading words from next segment
+        if i < len(base_segments) - 1 and pad_words > 0:
+            next_words = base_segments[i + 1]["text"].split()
+            suffix_pad = next_words[:pad_words]
+
+        padded_text = " ".join(prefix_pad + words + suffix_pad)
+        # Expand time window to cover padding
+        pad_start = base_segments[i - 1]["start"] if i > 0 and prefix_pad else seg["start"]
+        pad_end = base_segments[i + 1]["end"] if i < len(base_segments) - 1 and suffix_pad else seg["end"]
+        padded_base.append({
+            "seg": seg,
+            "padded_text": padded_text,
+            "prefix_len": len(prefix_pad),
+            "core_len": len(words),
+            "pad_start": pad_start,
+            "pad_end": pad_end,
+        })
+
+    # Match with expanded time windows
+    all_diffs = []
+    for pb in padded_base:
+        seg = pb["seg"]
+        # Find other segments overlapping the padded time window
+        matched_texts = []
+        first_other_offset = None
+        for os in other_segments:
+            if os["start"] >= pb["pad_end"]:
+                break
+            if os["end"] > pb["pad_start"]:
+                matched_texts.append(os["text"])
+                if first_other_offset is None:
+                    first_other_offset = os["word_offset"]
+        if not matched_texts:
+            continue
+
+        other_text = " ".join(matched_texts)
+        diffs = _parse_wdiff_diffs(other_text, pb["padded_text"], config)
+
+        # Keep only diffs whose b_pos falls in the core (non-padded) zone
+        core_start = pb["prefix_len"]
+        core_end = core_start + pb["core_len"]
+        for d in diffs:
+            if d["b_pos"] >= core_start and d["b_pos"] < core_end:
+                # Offset to global: remove prefix padding, add segment's global offset
+                d["b_pos"] = d["b_pos"] - core_start + seg["word_offset"]
+                d["a_pos"] += first_other_offset
+                all_diffs.extend([d])
+
+    return all_diffs
+
+
 def _merge_pairwise_diffs(pairwise_diffs: list[tuple[str, list[dict]]],
                           base_model: str,
                           all_models: list[str]) -> list[dict]:
@@ -612,7 +769,8 @@ def _call_and_parse_cluster(client, config, cluster, cluster_prompt,
 
 def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
                            config: SpeechConfig,
-                           model_confidence: dict[str, list[dict]] = None) -> str:
+                           model_confidence: dict[str, list[dict]] = None,
+                           model_json_paths: dict[str, Path] = None) -> str:
     """Resolve Whisper model disagreements via targeted diff resolution.
 
     Instead of rewriting entire text chunks, this:
@@ -643,16 +801,36 @@ def _resolve_whisper_diffs(base_text: str, all_transcripts: dict,
 
     other_models = [m for m in all_transcripts if m != base_model]
 
-    # Collect pairwise diffs
+    # Collect pairwise diffs (sentence-aligned or whole-text)
+    use_sentence_align = False
+    base_segments = None
+    if config.sentence_align and model_json_paths:
+        base_json = model_json_paths.get(base_model)
+        if base_json:
+            base_segments = _load_segments_with_offsets(base_json)
+            if base_segments:
+                use_sentence_align = True
+                print(f"  Using sentence-level alignment ({len(base_segments)} base segments)")
+            else:
+                print("  Warning: No segments in base model JSON, falling back to whole-text alignment")
+
     pairwise_diffs = []
     for other_model in other_models:
-        diffs = _parse_wdiff_diffs(
-            all_transcripts[other_model],  # text_a = other
-            all_transcripts[base_model],   # text_b = base
-            config,
-        )
+        if use_sentence_align:
+            other_json = model_json_paths.get(other_model)
+            if other_json:
+                diffs = _pairwise_diffs_by_sentence(base_segments, other_json, config)
+                method = "sentence-aligned"
+            else:
+                diffs = _parse_wdiff_diffs(
+                    all_transcripts[other_model], all_transcripts[base_model], config)
+                method = "whole-text fallback"
+        else:
+            diffs = _parse_wdiff_diffs(
+                all_transcripts[other_model], all_transcripts[base_model], config)
+            method = "whole-text"
         diffs = _filter_trivial_diffs(diffs)
-        print(f"  Found {len(diffs)} meaningful differences ({other_model} vs {base_model})")
+        print(f"  Found {len(diffs)} meaningful differences ({other_model} vs {base_model}) [{method}]")
         pairwise_diffs.append((other_model, diffs))
 
     # Merge into multi-way diffs if >1 other model
@@ -1265,9 +1443,12 @@ def _ensemble_asr_transcripts(config: SpeechConfig, data: SpeechData) -> None:
             else:
                 conf_data = None
 
+        json_paths = {m: data.asr_transcripts[m].get("json")
+                      for m in transcripts if data.asr_transcripts[m].get("json")}
         merged_text = _resolve_whisper_diffs(
             base_text, transcripts, config,
             model_confidence=conf_data,
+            model_json_paths=json_paths if config.sentence_align else None,
         )
 
     # Save ensemble-merged transcript

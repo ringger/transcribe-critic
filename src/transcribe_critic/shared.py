@@ -171,6 +171,7 @@ class SpeechConfig:
     merge_skip_threshold: int = 97  # Skip LLM merge when source agreement exceeds this % (0 to disable)
     merge_diff_context_words: int = 30  # Words of context around each diff (ASR ensembling)
     merge_max_diffs_per_call: int = 50  # Max diffs per LLM call (Whisper ensembling)
+    sentence_align: bool = False  # Use sentence-level wdiff alignment (experimental)
     api_max_retries: int = 5
     api_initial_backoff: int = 5  # seconds
     api_timeout: float = 120.0  # seconds per API attempt

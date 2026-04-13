@@ -21,8 +21,11 @@ from transcribe_critic.transcription import (
     _format_reading,
     _get_confidence_for_diff,
     _load_model_confidence,
+    _load_segments_with_offsets,
     _load_transcript_segments,
+    _match_segments_by_time,
     _merge_pairwise_diffs,
+    _pairwise_diffs_by_sentence,
     _parse_wdiff_diffs,
     _patch_hf_config,
     _resolve_whisper_diffs,
@@ -179,6 +182,157 @@ class TestFilterTrivialDiffs:
                   "a_pos": 0, "b_pos": 0, "a_len": 2, "b_len": 2}]
         # "spectral" and "special" are not stop words
         assert len(_filter_trivial_diffs(diffs)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Sentence-level alignment helpers
+# ---------------------------------------------------------------------------
+
+class TestLoadSegmentsWithOffsets:
+    def test_loads_segments_and_computes_offsets(self, tmp_path):
+        json_path = tmp_path / "asr_parakeet.json"
+        json_path.write_text(json.dumps({
+            "text": "Hello world. How are you today.",
+            "segments": [
+                {"start": 0.0, "end": 1.5, "text": "Hello world."},
+                {"start": 1.5, "end": 3.0, "text": "How are you today."},
+            ],
+        }))
+        segs = _load_segments_with_offsets(json_path)
+        assert len(segs) == 2
+        assert segs[0]["word_offset"] == 0
+        assert segs[0]["text"] == "Hello world."
+        assert segs[1]["word_offset"] == 2  # "Hello world." = 2 words
+        assert segs[1]["text"] == "How are you today."
+
+    def test_skips_empty_segments(self, tmp_path):
+        json_path = tmp_path / "asr_test.json"
+        json_path.write_text(json.dumps({
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "First."},
+                {"start": 1.0, "end": 2.0, "text": ""},
+                {"start": 2.0, "end": 3.0, "text": "Third."},
+            ],
+        }))
+        segs = _load_segments_with_offsets(json_path)
+        assert len(segs) == 2
+        assert segs[1]["word_offset"] == 1  # only "First." counted
+
+    def test_returns_empty_for_missing_file(self):
+        assert _load_segments_with_offsets(Path("/nonexistent.json")) == []
+
+    def test_returns_empty_for_none(self):
+        assert _load_segments_with_offsets(None) == []
+
+
+class TestMatchSegmentsByTime:
+    def test_exact_alignment(self):
+        base = [
+            {"start": 0.0, "end": 2.0, "text": "Hello world.", "word_offset": 0},
+            {"start": 2.0, "end": 4.0, "text": "How are you.", "word_offset": 2},
+        ]
+        other = [
+            {"start": 0.0, "end": 2.0, "text": "Hello there.", "word_offset": 0},
+            {"start": 2.0, "end": 4.0, "text": "How are ya.", "word_offset": 2},
+        ]
+        matches = _match_segments_by_time(base, other)
+        assert len(matches) == 2
+        assert matches[0][1] == "Hello there."
+        assert matches[0][2] == 0
+        assert matches[1][1] == "How are ya."
+        assert matches[1][2] == 2
+
+    def test_other_segment_spans_two_base_sentences(self):
+        base = [
+            {"start": 0.0, "end": 2.0, "text": "Hello.", "word_offset": 0},
+            {"start": 2.0, "end": 4.0, "text": "World.", "word_offset": 1},
+        ]
+        other = [
+            {"start": 0.0, "end": 4.0, "text": "Hello world.", "word_offset": 0},
+        ]
+        matches = _match_segments_by_time(base, other)
+        assert len(matches) == 2
+        # Both base sentences match the same other segment
+        assert matches[0][1] == "Hello world."
+        assert matches[1][1] == "Hello world."
+
+    def test_no_overlap(self):
+        base = [{"start": 0.0, "end": 1.0, "text": "A.", "word_offset": 0}]
+        other = [{"start": 5.0, "end": 6.0, "text": "B.", "word_offset": 0}]
+        matches = _match_segments_by_time(base, other)
+        assert len(matches) == 0
+
+    def test_multiple_other_segments_match_one_base(self):
+        base = [
+            {"start": 0.0, "end": 10.0, "text": "Long sentence here.", "word_offset": 0},
+        ]
+        other = [
+            {"start": 0.0, "end": 3.0, "text": "Long", "word_offset": 0},
+            {"start": 3.0, "end": 7.0, "text": "sentence", "word_offset": 1},
+            {"start": 7.0, "end": 10.0, "text": "here.", "word_offset": 2},
+        ]
+        matches = _match_segments_by_time(base, other)
+        assert len(matches) == 1
+        assert matches[0][1] == "Long sentence here."
+        assert matches[0][2] == 0  # first other segment's offset
+
+    def test_empty_inputs(self):
+        assert _match_segments_by_time([], []) == []
+        base = [{"start": 0.0, "end": 1.0, "text": "A.", "word_offset": 0}]
+        assert _match_segments_by_time(base, []) == []
+        assert _match_segments_by_time([], base) == []
+
+
+class TestPairwiseDiffsBySentence:
+    def test_finds_diffs_within_sentences(self, tmp_path):
+        # Base segments: two sentences
+        base_segments = [
+            {"start": 0.0, "end": 2.0, "text": "The cat sat.", "word_offset": 0},
+            {"start": 2.0, "end": 4.0, "text": "The dog ran.", "word_offset": 3},
+        ]
+        # Other model JSON: same structure, different words
+        other_json = tmp_path / "asr_other.json"
+        other_json.write_text(json.dumps({
+            "segments": [
+                {"start": 0.0, "end": 2.0, "text": "The cat sat."},
+                {"start": 2.0, "end": 4.0, "text": "The dog walked."},
+            ],
+        }))
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        diffs = _pairwise_diffs_by_sentence(base_segments, other_json, config)
+        # Should find diff in second sentence only (ran vs walked)
+        assert len(diffs) >= 1
+        # All diffs should have global positions (offset by word_offset)
+        for d in diffs:
+            assert d["b_pos"] >= 0
+
+    def test_returns_empty_for_missing_json(self, tmp_path):
+        base_segments = [
+            {"start": 0.0, "end": 2.0, "text": "Hello.", "word_offset": 0},
+        ]
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        diffs = _pairwise_diffs_by_sentence(
+            base_segments, tmp_path / "nonexistent.json", config)
+        assert diffs == []
+
+    def test_global_positions_are_correct(self, tmp_path):
+        # Two sentences: diff in second sentence should have b_pos >= 3
+        base_segments = [
+            {"start": 0.0, "end": 2.0, "text": "one two three", "word_offset": 0},
+            {"start": 2.0, "end": 4.0, "text": "four five six", "word_offset": 3},
+        ]
+        other_json = tmp_path / "asr_other.json"
+        other_json.write_text(json.dumps({
+            "segments": [
+                {"start": 0.0, "end": 2.0, "text": "one two three"},
+                {"start": 2.0, "end": 4.0, "text": "four CHANGED six"},
+            ],
+        }))
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        diffs = _pairwise_diffs_by_sentence(base_segments, other_json, config)
+        # The diff should be at position 4 (word "five" in global text)
+        assert any(d["b_pos"] == 4 for d in diffs), \
+            f"Expected diff at b_pos=4, got: {[d['b_pos'] for d in diffs]}"
 
 
 class TestClusterDiffs:

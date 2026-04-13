@@ -6,7 +6,9 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Timestamp-guided alignment.** Align by time window (e.g., 10s segments) using word timestamps from parakeet/whisper instead of LCS. Prevents name-list garbling. More principled but bigger lift.
 
-- **Sentence-level-first alignment.** Split into sentences first (using parakeet's sentence boundaries), align sentences across models, then wdiff within matched sentences. Keeps damage local.
+- **Sentence-level-first alignment.** Prototype implemented behind `--sentence-align` flag. Needs eval to confirm it helps. Known risk: premature commitment to sentence boundaries can create spurious diffs when a word lands on different sides of the boundary in different models. Two mitigations if boundary artifacts appear:
+  - *Boundary padding*: include a few words from adjacent base sentences in each wdiff, creating overlap that lets boundary words align. Discard diffs in the padding zone.
+  - *Complementary diff cancellation*: detect insertion+deletion of the same word at adjacent sentence boundaries and cancel them out.
 
 - **Revisit LLM-based chunk merge.** Give LLM full parallel texts in small chunks. Failed with Whisper-only (exp 1-9) but stronger models + more diverse signal might work now.
 

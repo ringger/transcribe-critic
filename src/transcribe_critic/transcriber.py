@@ -692,6 +692,8 @@ Examples:
                         help="Separate API key for merging/ensembling (default: same as --api-key)")
     llm_group.add_argument("--confidence", action="store_true",
                         help="Include ASR confidence scores in ensemble adjudication prompts")
+    llm_group.add_argument("--sentence-align", action="store_true",
+                        help="Align transcripts by sentence before diffing (experimental)")
     # Diarization
     diarize_group = parser.add_argument_group("diarization")
     diarize_group.add_argument("--no-diarize", action="store_false", dest="diarize",
@@ -847,6 +849,7 @@ Examples:
         slides_model=args.slides_model,
         slides_api_key=args.slides_api_key,
         confidence=getattr(args, "confidence", False),
+        sentence_align=getattr(args, "sentence_align", False),
     )
 
     data = SpeechData()

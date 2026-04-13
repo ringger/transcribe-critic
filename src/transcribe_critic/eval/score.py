@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from transcribe_critic.shared import (
-    DIARIZATION_JSON, ASR_MERGED_TXT, TRANSCRIPT_MERGED_TXT,
-    discover_transcript_files,
+    DIARIZATION_JSON, TRANSCRIPT_MERGED_TXT,
 )
 from transcribe_critic.eval.convert import (
     hypothesis_to_stm, plain_text_to_stm, diarization_json_to_rttm,
@@ -122,18 +121,14 @@ def _run_meeteval_der(ref_rttm: Path, hyp_rttm: Path, collar: float = 0.25) -> O
 def _discover_hypotheses(output_dir: Path) -> list[tuple[str, Path]]:
     """Discover all available transcript variants in an output directory.
 
-    Returns list of (name, path) tuples for each scorable transcript.
+    Finds all asr_*.txt files (individual models, merged, realigned, etc.)
+    and transcript_merged.txt.  Returns list of (name, path) tuples.
     """
     hypotheses = []
 
-    # Individual model outputs
-    for model, txt, prefix in discover_transcript_files(output_dir):
-        hypotheses.append((f"{prefix}_{model}", txt))
-
-    # Ensemble-merged
-    merged = output_dir / ASR_MERGED_TXT
-    if merged.exists():
-        hypotheses.append(("asr_merged", merged))
+    # All ASR outputs: individual models, merged, realigned, etc.
+    for txt in sorted(output_dir.glob("asr_*.txt")):
+        hypotheses.append((txt.stem, txt))
 
     # Source-merged (critical text from all sources)
     tm = output_dir / TRANSCRIPT_MERGED_TXT

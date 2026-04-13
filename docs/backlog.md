@@ -28,7 +28,8 @@ See `docs/experiments.md` for results of completed experiments.
 
 ## Evaluation
 
-- **Eval scorer should discover all asr_*.txt files.** Currently `discover_transcript_files()` only returns models in `ALL_MODELS`. Should also pick up `asr_merged.txt`, `asr_realigned.txt`, etc. for comparison scoring.
-- Expand Rev16 eval to more files for statistical significance
-- Test 2-way ensembles: parakeet + distil-large-v3, parakeet + qwen3-asr
-- Test with a local adjudicator closer to Sonnet quality (e.g., Llama 3.3 70B, Qwen 2.5 72B)
+- **Expand Rev16 eval to more files.** Current results (3 files) are too few for statistical significance — e.g., parakeet 24.7% vs ensemble 24.8% could be noise. Add more Rev16 files to the manifest and re-run.
+
+- **Test 2-way ensembles.** Currently only tested 3-way (parakeet+qwen3-asr+distil-large-v3). A 2-way ensemble matching 3-way quality would save compute. Test: parakeet+distil-large-v3, parakeet+qwen3-asr.
+
+- **Test stronger local adjudicator.** Local adjudicator gave neutral ensemble results. Try Llama 3.3 70B or Qwen 2.5 72B to close the gap with Claude Sonnet adjudication without API cost.

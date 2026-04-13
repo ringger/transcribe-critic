@@ -83,6 +83,29 @@ class TestDiscoverHypotheses:
         assert "asr_merged" in names
         assert "transcript_merged" in names
 
+    def test_finds_realigned_and_other_variants(self, tmp_path):
+        (tmp_path / "asr_realigned.txt").write_text("hello")
+        (tmp_path / "asr_custom-postproc.txt").write_text("hello")
+        result = _discover_hypotheses(tmp_path)
+        names = [name for name, _ in result]
+        assert "asr_realigned" in names
+        assert "asr_custom-postproc" in names
+
+    def test_ignores_non_asr_txt_files(self, tmp_path):
+        (tmp_path / "notes.txt").write_text("not a hypothesis")
+        (tmp_path / "asr_medium.txt").write_text("hello")
+        result = _discover_hypotheses(tmp_path)
+        names = [name for name, _ in result]
+        assert names == ["asr_medium"]
+
+    def test_results_sorted_alphabetically(self, tmp_path):
+        (tmp_path / "asr_parakeet.txt").write_text("hello")
+        (tmp_path / "asr_distil-large-v3.txt").write_text("hello")
+        (tmp_path / "asr_merged.txt").write_text("hello")
+        result = _discover_hypotheses(tmp_path)
+        names = [name for name, _ in result]
+        assert names == ["asr_distil-large-v3", "asr_merged", "asr_parakeet"]
+
     def test_empty_dir(self, tmp_path):
         assert _discover_hypotheses(tmp_path) == []
 

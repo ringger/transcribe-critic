@@ -195,6 +195,8 @@ class SpeechConfig:
     summary_local: Optional[bool] = None  # None = inherit from `local`
     summary_model: Optional[str] = None  # None = inherit from claude_model / local_model
     summary_api_key: Optional[str] = None  # None = inherit from api_key
+    # yt-dlp auth
+    cookies_from_browser: Optional[str] = None  # e.g. "safari", "chrome" — passed through to yt-dlp
 
     def __post_init__(self):
         if self.models is None:

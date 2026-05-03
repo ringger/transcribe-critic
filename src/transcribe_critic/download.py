@@ -17,11 +17,18 @@ from transcribe_critic.shared import (
 )
 
 
+def _cookie_args(config: SpeechConfig) -> list:
+    if config.cookies_from_browser:
+        return ["--cookies-from-browser", config.cookies_from_browser]
+    return []
+
+
 def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) -> None:
     """Download audio, video, and captions using yt-dlp."""
     print()
     print("[download] Downloading media...")
 
+    cookies = _cookie_args(config)
     output_template = str(config.output_dir / "%(title)s.%(ext)s")
 
     # Get video info first to extract title (skip if pre-fetched or cached)
@@ -34,7 +41,7 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
     elif info is None:
         print("  Fetching video info...")
         result = run_command(
-            ["yt-dlp", "--dump-json", config.url],
+            ["yt-dlp", *cookies, "--dump-json", config.url],
             "fetching video info",
             config.verbose
         )
@@ -72,7 +79,7 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
     else:
         print("  Downloading audio...")
         run_command(
-            ["yt-dlp", "-x", "--audio-format", "mp3",
+            ["yt-dlp", *cookies, "-x", "--audio-format", "mp3",
              "-o", str(config.output_dir / "audio.%(ext)s"), config.url],
             "downloading audio",
             config.verbose
@@ -90,7 +97,7 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
         else:
             print("  Downloading video...")
             run_command(
-                ["yt-dlp", "-f", "mp4",
+                ["yt-dlp", *cookies, "-f", "mp4",
                  "-o", str(config.output_dir / "video.%(ext)s"), config.url],
                 "downloading video",
                 config.verbose
@@ -107,7 +114,7 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
         print("  Downloading captions (if available)...")
         try:
             run_command(
-                ["yt-dlp", "--write-auto-sub", "--sub-lang", "en", "--skip-download",
+                ["yt-dlp", *cookies, "--write-auto-sub", "--sub-lang", "en", "--skip-download",
                  "-o", str(config.output_dir / "captions.%(ext)s"), config.url],
                 "downloading captions",
                 config.verbose

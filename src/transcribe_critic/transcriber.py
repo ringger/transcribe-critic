@@ -50,8 +50,10 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 from transcribe_critic import __version__
 from transcribe_critic.shared import (
@@ -71,6 +73,7 @@ SECTION_SEPARATOR = "=" * 50
 
 # Valid pipeline step names
 VALID_STEPS = {"download", "transcribe", "ensemble", "diarize", "slides", "merge", "markdown", "summarize", "analysis"}
+STEP_ALIASES = {"output": "markdown"}
 
 
 def _should_run_step(step_name: str, config: SpeechConfig) -> bool:
@@ -194,14 +197,34 @@ def _slugify_title(title: str, max_len: int = 50) -> str:
     return re.sub(r'\s+', '-', safe).lower()
 
 
-def _fetch_metadata(url: str, verbose: bool = False) -> dict:
+def _fetch_metadata(url: str, verbose: bool = False, cookies_from_browser: Optional[str] = None) -> dict:
     """Fetch video/audio metadata via yt-dlp without downloading."""
+    cookie_args = ["--cookies-from-browser", cookies_from_browser] if cookies_from_browser else []
     result = run_command(
-        ["yt-dlp", "--dump-json", url],
+        ["yt-dlp", *cookie_args, "--dump-json", url],
         "fetching media info",
         verbose,
     )
     return json.loads(result.stdout)
+
+
+def _check_ytdlp_freshness() -> None:
+    """Warn if yt-dlp is more than 60 days old. Site extractors (Instagram, X, etc.) break frequently."""
+    from datetime import date
+    try:
+        result = subprocess.run(["yt-dlp", "--version"], capture_output=True, text=True, timeout=5)
+        version = result.stdout.strip()
+        # Format: YYYY.MM.DD
+        parts = version.split(".")
+        if len(parts) == 3:
+            release = date(int(parts[0]), int(parts[1]), int(parts[2]))
+            age = (date.today() - release).days
+            if age > 60:
+                print(f"  yt-dlp: OK (version {version} is {age} days old — consider `pip install -U yt-dlp` if downloads fail)")
+                return
+    except Exception:
+        pass
+    print(f"  yt-dlp: OK")
 
 
 def _load_external_transcript(config: SpeechConfig) -> tuple:
@@ -657,6 +680,8 @@ Examples:
                         help="Override the title (default: from yt-dlp metadata)")
     input_group.add_argument("--podcast", action="store_true",
                         help="Podcast mode: audio-only, skip video and captions download")
+    input_group.add_argument("--cookies-from-browser",
+                        help="Pass cookies from a local browser to yt-dlp (e.g. safari, chrome). Useful for Instagram/X login walls.")
     slides_group.add_argument("--scene-threshold", type=float, default=0.1,
                         help="Scene detection threshold 0-1 (default: 0.1)")
     slides_group.add_argument("--analyze-slides", action="store_true",
@@ -751,7 +776,7 @@ Examples:
         sys.exit(1)
 
     whisper_impl = "mlx-whisper" if deps["mlx_whisper"] else "openai-whisper"
-    print(f"  yt-dlp: OK")
+    _check_ytdlp_freshness()
     print(f"  ffmpeg: OK")
     print(f"  whisper: OK ({whisper_impl})")
     if deps["parakeet_mlx"]:
@@ -765,7 +790,7 @@ Examples:
         try:
             print()
             print("Fetching media info...")
-            media_info = _fetch_metadata(args.url, args.verbose)
+            media_info = _fetch_metadata(args.url, args.verbose, args.cookies_from_browser)
             title = media_info.get("title", "speech")
             slug = _slugify_title(title)
             output_dir = Path(f"./transcripts/{slug}")
@@ -803,7 +828,7 @@ Examples:
     # Parse --steps
     steps = None
     if args.steps:
-        steps = [s.strip() for s in args.steps.split(",")]
+        steps = [STEP_ALIASES.get(s.strip(), s.strip()) for s in args.steps.split(",")]
         invalid = set(steps) - VALID_STEPS
         if invalid:
             print(f"Invalid step(s): {', '.join(sorted(invalid))}")
@@ -822,6 +847,7 @@ Examples:
         title=args.title,
         no_slides=no_slides,
         podcast=args.podcast,
+        cookies_from_browser=args.cookies_from_browser,
         analyze_slides=args.analyze_slides,
         merge_sources=not args.no_merge,
         external_transcript=args.external_transcript,

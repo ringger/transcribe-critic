@@ -164,6 +164,27 @@ class TestDownloadMedia:
         assert metadata["external_transcript"] == "https://example.com/transcript.txt"
 
     @patch("transcribe_critic.download.run_command", side_effect=_mock_run_command_for_download)
+    def test_passes_cookies_from_browser_to_all_calls(self, mock_run, tmp_path):
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=False, skip_existing=False,
+                              cookies_from_browser="safari")
+        data = SpeechData()
+        download_media(config, data)
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            assert "--cookies-from-browser" in cmd, f"missing cookies in: {cmd}"
+            assert cmd[cmd.index("--cookies-from-browser") + 1] == "safari"
+
+    @patch("transcribe_critic.download.run_command", side_effect=_mock_run_command_for_download)
+    def test_omits_cookies_when_unset(self, mock_run, tmp_path):
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=False, skip_existing=False)
+        data = SpeechData()
+        download_media(config, data)
+        for call in mock_run.call_args_list:
+            assert "--cookies-from-browser" not in call[0][0]
+
+    @patch("transcribe_critic.download.run_command", side_effect=_mock_run_command_for_download)
     def test_podcast_skips_video_and_captions(self, mock_run, tmp_path, capsys):
         config = SpeechConfig(url="https://example.com/podcast/ep1", output_dir=tmp_path,
                               podcast=True, no_slides=True, skip_existing=False)

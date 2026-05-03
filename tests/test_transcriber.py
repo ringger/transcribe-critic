@@ -893,6 +893,34 @@ class TestFetchMetadata:
         with pytest.raises(Exception, match="not found"):
             _fetch_metadata("https://example.com/bad")
 
+    @patch("transcribe_critic.shared.subprocess.run")
+    def test_passes_cookies_from_browser(self, mock_run):
+        import json
+        mock_run.return_value = MagicMock(stdout=json.dumps({"title": "T"}), returncode=0)
+        _fetch_metadata("https://example.com/v", cookies_from_browser="safari")
+        cmd = mock_run.call_args[0][0]
+        assert "--cookies-from-browser" in cmd
+        assert cmd[cmd.index("--cookies-from-browser") + 1] == "safari"
+
+    @patch("transcribe_critic.shared.subprocess.run")
+    def test_omits_cookies_when_not_set(self, mock_run):
+        import json
+        mock_run.return_value = MagicMock(stdout=json.dumps({"title": "T"}), returncode=0)
+        _fetch_metadata("https://example.com/v")
+        cmd = mock_run.call_args[0][0]
+        assert "--cookies-from-browser" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# STEP_ALIASES
+# ---------------------------------------------------------------------------
+
+class TestStepAliases:
+    def test_output_alias_resolves_to_markdown(self):
+        from transcribe_critic.transcriber import STEP_ALIASES, VALID_STEPS
+        assert STEP_ALIASES["output"] == "markdown"
+        assert STEP_ALIASES["output"] in VALID_STEPS
+
 
 # ---------------------------------------------------------------------------
 # main() CLI validation

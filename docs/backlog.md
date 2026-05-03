@@ -14,6 +14,8 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Ripple diff resolution.** Resolve diffs sequentially within clusters, re-running wdiff after each resolution so subsequent diffs have correct positions and updated context. Initial attempt using position-shift patching failed (corrupted text). Needs a ground-up design that re-diffs after each applied resolution rather than adjusting offsets.
 
+- **Symbol/word duplication in adjudication.** When one model emits "%" and another spells out "percent", the adjudicator sometimes keeps both, producing "252% percent". Seen on Instagram reel run (parakeet+qwen3-asr+distil-large-v3, Claude Sonnet adjudicator) — every `%` token got a duplicated " percent" suffix. Likely the same class of bug applies to other symbol/word pairs ($/dollars, &/and, #/number). Fix could be normalization-aware diff merging or a stronger adjudicator instruction to pick one form.
+
 ## Model Issues
 
 - **Qwen3-ASR MP3 truncation.** mlx-audio silently truncates long MP3 files. Workaround in place (`_ensure_wav()`). Should file upstream bug.
@@ -25,6 +27,13 @@ See `docs/experiments.md` for results of completed experiments.
 - **Parakeet TDT forced alignment.** TDT decoder exposes logits via joint network — architecturally feasible to score candidate token sequences against encoder output. Blocked on SentencePiece tokenizer extraction (not bundled in HF cache or .nemo archive).
 
 - **Prompt Whisper with alternate transcripts.** Use `initial_prompt` to bias Whisper toward each candidate reading. If prompting with "wedding" produces "wedding" but prompting with "wife" also produces "wedding", strong evidence for "wedding." Cheap and uses existing API.
+
+## Output / Presentation
+
+- **TTS summary narration.** Read the generated summary aloud as an mp3 alongside the transcript. Two modes:
+  - *Out-of-the-box voice* (simpler, no consent issue): pick a stock voice from the TTS engine. Good default; works for any content including multi-speaker.
+  - *Voice-cloned* from source audio (personal-use only due to consent): extract a 30–60s clean sample (parakeet word timestamps can help pick a contiguous span) and clone the speaker's voice. Best fit for single-speaker content (podcasts, monologues like Nate Jones).
+  - Candidate TTS: ElevenLabs (cloud, best quality, both modes), XTTS-v2 / F5-TTS / Kokoro (local, Apple Silicon). Slots in as a new pipeline stage after `analysis`: summary text → TTS → mp3.
 
 ## Evaluation
 

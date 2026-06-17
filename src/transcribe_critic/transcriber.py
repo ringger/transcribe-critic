@@ -62,11 +62,13 @@ from transcribe_critic.shared import (
     ALL_MODELS, is_whisper_model, get_model_quality_rank,
     discover_transcript_files, has_legacy_whisper_files,
     DEFAULT_CLAUDE_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_URL, DEFAULT_MODELS,
+    CLAUDE_MODEL_PRICING, DEFAULT_CLAUDE_PRICING, get_claude_model_pricing,
     AUDIO_MP3, AUDIO_WAV, CAPTIONS_VTT, ASR_MERGED_TXT,
     DIARIZATION_JSON, DIARIZED_TXT, TRANSCRIPT_MERGED_TXT,
     ANALYSIS_MD, SLIDE_TIMESTAMPS_JSON,
     run_command, _print_reusing, _dry_run_skip, _should_skip,
     _collect_source_paths, _is_url, check_dependencies,
+    timed,
 )
 
 SECTION_SEPARATOR = "=" * 50
@@ -151,25 +153,14 @@ def _hydrate_data(config: SpeechConfig, data: SpeechData) -> None:
         data.merged_transcript_path = tm
 
 
-# API pricing per 1K tokens, keyed by model family prefix (as of 2025-05)
-MODEL_PRICING = {
-    "claude-opus-4":   {"input": 0.015, "output": 0.075},
-    "claude-sonnet-4": {"input": 0.003, "output": 0.015},
-    "claude-sonnet-3": {"input": 0.003, "output": 0.015},
-    "claude-haiku-4":  {"input": 0.001, "output": 0.005},
-    "claude-haiku-3":  {"input": 0.0008, "output": 0.004},
-}
-DEFAULT_PRICING = MODEL_PRICING["claude-sonnet-4"]  # fallback
+# Claude model pricing now lives in shared.py (single registry). Re-exported
+# here under the historical names so existing imports keep working.
+MODEL_PRICING = CLAUDE_MODEL_PRICING
+DEFAULT_PRICING = DEFAULT_CLAUDE_PRICING
+_get_model_pricing = get_claude_model_pricing
+
 VISION_COST_PER_IMAGE = 0.02               # ~$0.01-0.02 per medium slide
 TOKENS_PER_WORD = 1.3                      # rough word-to-token ratio
-
-
-def _get_model_pricing(model_name: str) -> dict:
-    """Return {input, output} cost per 1K tokens for the given model name."""
-    for prefix, pricing in MODEL_PRICING.items():
-        if model_name.startswith(prefix):
-            return pricing
-    return DEFAULT_PRICING
 
 # Pipeline stage modules
 from transcribe_critic.download import download_media, clean_vtt_captions
@@ -986,41 +977,51 @@ Examples:
             print(f"  Running steps: {', '.join(config.steps)}")
             print()
 
-        # Run pipeline — each stage skips if output already exists
+        # Run pipeline — each stage skips if output already exists.
+        # Each stage is timed with a monotonic clock (suspend-excluded).
         if _should_run_step("download", config):
-            download_media(config, data, info=media_info)
+            with timed("[download]"):
+                download_media(config, data, info=media_info)
 
         if _should_run_step("transcribe", config):
-            transcribe_audio(config, data)
+            with timed("[transcribe]"):
+                transcribe_audio(config, data)
 
         if _should_run_step("ensemble", config):
             from transcribe_critic.transcription import _ensemble_asr_transcripts
-            _ensemble_asr_transcripts(config, data)
+            with timed("[ensemble]"):
+                _ensemble_asr_transcripts(config, data)
 
         if config.diarize and _should_run_step("diarize", config):
-            diarize_audio(config, data)
+            with timed("[diarize]"):
+                diarize_audio(config, data)
 
         if not config.no_slides and _should_run_step("slides", config):
-            extract_slides(config, data)
+            with timed("[slides]"):
+                extract_slides(config, data)
 
-            if config.analyze_slides:
-                analyze_slides_with_vision(config, data)
-            else:
-                create_basic_slides_json(config, data)
+                if config.analyze_slides:
+                    analyze_slides_with_vision(config, data)
+                else:
+                    create_basic_slides_json(config, data)
 
         # Merge transcript sources if requested
         if _should_run_step("merge", config):
-            merge_transcript_sources(config, data)
+            with timed("[merge]"):
+                merge_transcript_sources(config, data)
 
         if _should_run_step("markdown", config):
-            generate_markdown(config, data)
+            with timed("[markdown]"):
+                generate_markdown(config, data)
 
         if config.summarize and _should_run_step("summarize", config):
             from transcribe_critic.summarize import summarize_transcript
-            summarize_transcript(config, data)
+            with timed("[summarize]"):
+                summarize_transcript(config, data)
 
         if _should_run_step("analysis", config):
-            analyze_source_survival(config, data)
+            with timed("[analysis]"):
+                analyze_source_survival(config, data)
 
         # Summary
         print()

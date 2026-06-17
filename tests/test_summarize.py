@@ -92,11 +92,11 @@ class TestResolveSummaryConfig:
         config = SpeechConfig(
             url="test", output_dir=Path("/tmp"),
             local=False,
-            claude_model="claude-sonnet-4-20250514",
-            summary_model="claude-opus-4-20250514",
+            claude_model="claude-sonnet-4-6",
+            summary_model="claude-opus-4-8",
         )
         resolved = _resolve_summary_config(config)
-        assert resolved.claude_model == "claude-opus-4-20250514"
+        assert resolved.claude_model == "claude-opus-4-8"
 
     def test_overrides_model_for_local(self):
         config = SpeechConfig(

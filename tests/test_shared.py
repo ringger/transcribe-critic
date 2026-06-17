@@ -14,6 +14,7 @@ from conftest import make_openai_response
 from transcribe_critic.shared import (
     SpeechConfig,
     SpeechData,
+    DEFAULT_CLAUDE_MODEL,
     ALL_MODELS,
     ASR_MODEL_REGISTRY,
     WHISPER_QUALITY_RANK,
@@ -876,7 +877,7 @@ class TestResolveStageConfig:
             url="x", output_dir=tmp_path,
             local=True, local_model="qwen2.5:14b",
             local_vision_model="llava",
-            claude_model="claude-sonnet-4-20250514",
+            claude_model=DEFAULT_CLAUDE_MODEL,
             api_key="sk-main",
         )
 
@@ -929,13 +930,13 @@ class TestResolveStageConfig:
         assert result.api_key == "sk-stage"
         # Original config should be unchanged
         assert base_config.local is True
-        assert base_config.claude_model == "claude-sonnet-4-20250514"
+        assert base_config.claude_model == DEFAULT_CLAUDE_MODEL
         assert base_config.api_key == "sk-main"
 
     def test_does_not_mutate_original_config(self, base_config):
         resolve_stage_config(base_config, False, "other-model", "sk-other")
         assert base_config.local is True
-        assert base_config.claude_model == "claude-sonnet-4-20250514"
+        assert base_config.claude_model == DEFAULT_CLAUDE_MODEL
         assert base_config.api_key == "sk-main"
 
     def test_inherits_local_from_config_when_stage_local_none(self, tmp_path):

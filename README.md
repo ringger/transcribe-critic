@@ -178,7 +178,7 @@ transcribe-critic "https://youtube.com/watch?v=..." --api \
 
 # Use Claude API for summaries even when adjudication uses local Ollama
 transcribe-critic "https://youtube.com/watch?v=..." \
-    --summary-api --summary-model claude-sonnet-4-20250514
+    --summary-api --summary-model claude-sonnet-4-6
 
 # Re-run just the summarization step
 transcribe-critic "https://youtube.com/watch?v=..." --steps summarize -o ./my_transcript
@@ -196,10 +196,12 @@ Each LLM-dependent pipeline stage (merging/ensembling, slide analysis, summariza
 transcribe-critic "https://youtube.com/watch?v=..." --slides --analyze-slides \
     --slides-api --summary-api
 
-# Claude API for everything, but use Opus for merging and Sonnet for summaries
+# Claude API for everything, with a different model per stage.
+# Sonnet is plenty for transcript work (Opus is overkill); use a cheaper
+# model for the simpler summary pass if you want to save cost.
 transcribe-critic "https://youtube.com/watch?v=..." --api \
-    --merge-model claude-opus-4-20250514 \
-    --summary-model claude-sonnet-4-20250514
+    --merge-model claude-sonnet-4-6 \
+    --summary-model claude-haiku-4-5
 
 # Each stage can also have its own API key
 transcribe-critic "https://youtube.com/watch?v=..." \

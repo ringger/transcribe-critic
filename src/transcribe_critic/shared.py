@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass, field, replace
 from typing import Optional
@@ -33,6 +34,38 @@ def tprint(*args, **kwargs):
 
 
 print = tprint
+
+
+def fmt_elapsed(seconds: float) -> str:
+    """Compact elapsed-time string for logging, e.g. '17.2s', '3m04s', '1h02m05s'.
+
+    Distinct from fmt_duration() (which formats media positions as H:MM:SS);
+    this is tuned for human-readable compute durations in log lines.
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m{secs:02d}s"
+
+
+@contextmanager
+def timed(label):
+    """Time a block with a monotonic clock and log the elapsed compute time.
+
+    Uses time.monotonic() rather than differencing the wall-clock [HH:MM:SS]
+    stamps from tprint(): on macOS monotonic() is backed by mach_absolute_time(),
+    which does NOT advance while the system is asleep, so suspend / lid-close
+    time is excluded from the measurement. The wall-clock stamps remain in the
+    log for "when did this happen"; this reports "how much compute it took".
+    """
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        tprint(f"{label} done in {fmt_elapsed(time.monotonic() - start)} (compute)")
 
 # ---------------------------------------------------------------------------
 # Unified ASR model registry
@@ -127,11 +160,34 @@ ASR_MODEL_REGISTRY = {m: e for m, e in ALL_MODELS.items()
                       if e["backend"] != "whisper"}
 
 # Default LLM model names
-DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+# Sonnet is the right default for every LLM stage (merge/summary/slides);
+# Opus is overkill for transcript work. Override per-stage if ever needed.
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 DEFAULT_LOCAL_MODEL = "qwen2.5:14b"
 DEFAULT_LOCAL_VISION_MODEL = "llava"
 DEFAULT_OLLAMA_URL = "http://localhost:11434/v1/"
 DEFAULT_MODELS = ["parakeet"]
+
+# Claude model registry — single source of truth for API pricing.
+# Keyed by model-family prefix (matched with str.startswith), so a specific
+# id like "claude-sonnet-4-6" resolves via its "claude-sonnet-4" family.
+# Update here when Anthropic ships or retires a model.
+CLAUDE_MODEL_PRICING = {
+    "claude-opus-4":   {"input": 0.015, "output": 0.075},
+    "claude-sonnet-4": {"input": 0.003, "output": 0.015},
+    "claude-sonnet-3": {"input": 0.003, "output": 0.015},
+    "claude-haiku-4":  {"input": 0.001, "output": 0.005},
+    "claude-haiku-3":  {"input": 0.0008, "output": 0.004},
+}
+DEFAULT_CLAUDE_PRICING = CLAUDE_MODEL_PRICING["claude-sonnet-4"]  # fallback for unknown ids
+
+
+def get_claude_model_pricing(model_name: str) -> dict:
+    """Return {input, output} cost per 1K tokens for the given Claude model id."""
+    for prefix, pricing in CLAUDE_MODEL_PRICING.items():
+        if model_name.startswith(prefix):
+            return pricing
+    return DEFAULT_CLAUDE_PRICING
 
 # Common/stop words for filtering trivial diffs in ensembling and merging
 COMMON_WORDS = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',

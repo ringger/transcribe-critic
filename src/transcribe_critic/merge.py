@@ -10,10 +10,12 @@ import os
 import re
 import shutil
 import subprocess
+import time
 
 from transcribe_critic.prompts import load_prompt
 from transcribe_critic.shared import (
     tprint as print,
+    fmt_elapsed,
     SpeechConfig, COMMON_WORDS,
     write_temp_text, normalize_for_comparison,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
@@ -639,15 +641,17 @@ def _merge_structured(skeleton_segments: list, all_sources: list,
         prompt_words = len(prompt.split())
         print(f"    Prompt: ~{prompt_words} words ({len(prompt)} chars)")
 
+        chunk_start = time.monotonic()
         message = llm_call_with_retry(
             client, merge_cfg,
             model=merge_cfg.claude_model,
             max_tokens=16384,
             messages=[{"role": "user", "content": prompt}]
         )
+        chunk_elapsed = fmt_elapsed(time.monotonic() - chunk_start)
 
         response = message.content[0].text.strip()
-        print(f"    Response: {len(response)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out")
+        print(f"    Response: {len(response)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out, elapsed: {chunk_elapsed}")
 
         merged_texts = _parse_passage_response(response, len(seg_indices))
 
@@ -799,15 +803,17 @@ def _merge_multi_source(sources: list,
         prompt_words = len(prompt.split())
         print(f"    Prompt: ~{prompt_words} words ({len(prompt)} chars)")
 
+        chunk_start = time.monotonic()
         message = llm_call_with_retry(
             client, merge_cfg,
             model=merge_cfg.claude_model,
             max_tokens=16384,
             messages=[{"role": "user", "content": prompt}]
         )
+        chunk_elapsed = fmt_elapsed(time.monotonic() - chunk_start)
 
         chunk_merged = message.content[0].text.strip()
-        print(f"    Response: {len(chunk_merged)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out")
+        print(f"    Response: {len(chunk_merged)} chars, usage: {message.usage.input_tokens} in / {message.usage.output_tokens} out, elapsed: {chunk_elapsed}")
         _save_chunk_checkpoint(chunks_dir, chunk_idx, chunk_merged)
         merged_chunks.append(chunk_merged)
 

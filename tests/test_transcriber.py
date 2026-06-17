@@ -267,10 +267,10 @@ class TestEstimateApiCost:
 
     def test_opus_costs_more_than_sonnet(self, tmp_path):
         sonnet = SpeechConfig(url="x", output_dir=tmp_path,
-                              claude_model="claude-sonnet-4-20250514",
+                              claude_model="claude-sonnet-4-6",
                               models=["medium"])
         opus = SpeechConfig(url="x", output_dir=tmp_path,
-                            claude_model="claude-opus-4-20250514",
+                            claude_model="claude-opus-4-8",
                             models=["medium"])
         cost_s = estimate_api_cost(sonnet, transcript_words=5000)
         cost_o = estimate_api_cost(opus, transcript_words=5000)
@@ -278,10 +278,10 @@ class TestEstimateApiCost:
 
     def test_haiku_costs_less_than_sonnet(self, tmp_path):
         sonnet = SpeechConfig(url="x", output_dir=tmp_path,
-                              claude_model="claude-sonnet-4-20250514",
+                              claude_model="claude-sonnet-4-6",
                               models=["medium"])
         haiku = SpeechConfig(url="x", output_dir=tmp_path,
-                             claude_model="claude-haiku-4-20250514",
+                             claude_model="claude-haiku-4-5",
                              models=["medium"])
         cost_s = estimate_api_cost(sonnet, transcript_words=5000)
         cost_h = estimate_api_cost(haiku, transcript_words=5000)

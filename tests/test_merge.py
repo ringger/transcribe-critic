@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from transcribe_critic.shared import SpeechConfig, is_up_to_date
+from transcribe_critic.shared import (
+    SpeechConfig, is_up_to_date,
+    normalize_for_comparison, write_temp_text,
+    WdiffNotFound,
+)
 
 from transcribe_critic.merge import (
     MERGE_CHECKPOINT_VERSION,
@@ -26,69 +30,67 @@ from transcribe_critic.merge import (
     _load_chunk_checkpoint,
     _merge_multi_source,
     _merge_structured,
-    _normalize_for_comparison,
     _parse_passage_response,
     _parse_structured_transcript,
     _parse_wdiff_tokens,
     _save_chunk_checkpoint,
     _wdiff_stats,
-    _write_temp_text,
 )
 
 
 # ---------------------------------------------------------------------------
-# _normalize_for_comparison
+# normalize_for_comparison
 # ---------------------------------------------------------------------------
 
 class TestNormalizeForComparison:
     def test_lowercase(self):
-        assert _normalize_for_comparison("Hello World") == "hello world"
+        assert normalize_for_comparison("Hello World") == "hello world"
 
     def test_removes_punctuation(self):
-        assert _normalize_for_comparison("Hello, World!") == "hello world"
+        assert normalize_for_comparison("Hello, World!") == "hello world"
 
     def test_collapses_whitespace(self):
-        assert _normalize_for_comparison("  hello   world  ") == "hello world"
+        assert normalize_for_comparison("  hello   world  ") == "hello world"
 
     def test_tabs_and_newlines(self):
-        assert _normalize_for_comparison("hello\t\nworld") == "hello world"
+        assert normalize_for_comparison("hello\t\nworld") == "hello world"
 
     def test_apostrophes_removed(self):
         # \w includes letters and digits, ' is not \w
-        assert _normalize_for_comparison("don't") == "dont"
+        assert normalize_for_comparison("don't") == "dont"
 
     def test_empty_string(self):
-        assert _normalize_for_comparison("") == ""
+        assert normalize_for_comparison("") == ""
 
 
 # ---------------------------------------------------------------------------
-# _normalize_for_comparison — additional edge cases
+# normalize_for_comparison — additional edge cases
 # ---------------------------------------------------------------------------
 
 class TestNormalizeEdgeCases:
     def test_unicode_accented_characters(self):
-        result = _normalize_for_comparison("café résumé naïve")
+        result = normalize_for_comparison("café résumé naïve")
         assert result == "café résumé naïve"
 
     def test_numbers_preserved(self):
-        result = _normalize_for_comparison("There are 42 items worth $100")
+        result = normalize_for_comparison("There are 42 items worth $100")
         assert "42" in result
         assert "100" in result
 
     def test_multiple_consecutive_punctuation(self):
-        result = _normalize_for_comparison("What?!? Really!!!")
+        result = normalize_for_comparison("What?!? Really!!!")
         words = result.split()
         assert len(words) == 2  # word count preserved
 
     def test_all_punctuation_word(self):
-        result = _normalize_for_comparison("hello --- world")
+        result = normalize_for_comparison("hello --- world")
         words = result.split()
         assert len(words) == 3  # placeholder for ---
         assert words[1] == "_"
 
     def test_mixed_emoji_and_text(self):
         # Emoji may or may not be \w depending on regex engine
-        result = _normalize_for_comparison("hello world")
+        result = normalize_for_comparison("hello world")
         assert "hello" in result
         assert "world" in result
 
@@ -1440,13 +1442,13 @@ class TestMergeMultiSourceEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _write_temp_text
+# write_temp_text
 # ---------------------------------------------------------------------------
 
 class TestWriteTempText:
     def test_creates_file_with_content(self):
         import os
-        path = _write_temp_text("hello world")
+        path = write_temp_text("hello world")
         try:
             assert os.path.exists(path)
             with open(path) as f:
@@ -1456,8 +1458,8 @@ class TestWriteTempText:
 
     def test_returns_unique_paths(self):
         import os
-        p1 = _write_temp_text("a")
-        p2 = _write_temp_text("b")
+        p1 = write_temp_text("a")
+        p2 = write_temp_text("b")
         try:
             assert p1 != p2
         finally:
@@ -1526,3 +1528,30 @@ class TestParsePassageResponse:
         result = _parse_passage_response(response, 3)
         assert len(result) == 3
         assert result[3] == "Third."
+
+
+# ---------------------------------------------------------------------------
+# wdiff availability handling across call sites
+# ---------------------------------------------------------------------------
+
+class TestWdiffMissingBinary:
+    """Before the shared wdiff helper, only _analyze_differences_wdiff checked
+    for the binary; the other call sites raised a bare FileNotFoundError from
+    subprocess. The check now lives in wdiff_pair, so every site fails with one
+    named error — and the one site that degraded gracefully still does."""
+
+    @patch("transcribe_critic.shared.shutil.which", return_value=None)
+    def test_analyze_differences_still_degrades_gracefully(self, mock_which, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        assert _analyze_differences_wdiff("alpha beta", "alpha gamma", config) == []
+
+    @patch("transcribe_critic.shared.shutil.which", return_value=None)
+    def test_wdiff_stats_raises_named_error(self, mock_which):
+        with pytest.raises(WdiffNotFound):
+            _wdiff_stats("alpha beta", "alpha gamma")
+
+    @patch("transcribe_critic.shared.shutil.which", return_value=None)
+    def test_build_alignment_raises_named_error(self, mock_which, tmp_path):
+        config = SpeechConfig(url="x", output_dir=tmp_path)
+        with pytest.raises(WdiffNotFound):
+            _build_wdiff_alignment("alpha beta", "alpha gamma", config)

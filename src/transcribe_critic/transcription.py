@@ -21,10 +21,9 @@ from transcribe_critic.shared import (
     create_llm_client, llm_call_with_retry, resolve_stage_config,
     run_command, _save_json, _print_reusing, _dry_run_skip, _should_skip,
     check_dependencies,
+    wdiff_pair, run_wdiff,
 )
-from transcribe_critic.merge import (
-    _normalize_for_comparison, _write_temp_text, _parse_wdiff_tokens,
-)
+from transcribe_critic.merge import _parse_wdiff_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -189,25 +188,12 @@ def _parse_wdiff_diffs(text_a: str, text_b: str, config: SpeechConfig) -> list[d
     are from the original (unnormalized) texts so replacements preserve
     the original casing and punctuation.
     """
-    import os
-    import subprocess
-
-    norm_a = _normalize_for_comparison(text_a)
-    norm_b = _normalize_for_comparison(text_b)
     a_words_orig = text_a.split()
     b_words_orig = text_b.split()
 
-    a_path = _write_temp_text(norm_a)
-    b_path = _write_temp_text(norm_b)
-    try:
-        result = subprocess.run(
-            ["wdiff", a_path, b_path],
-            capture_output=True, text=True,
-        )
+    with wdiff_pair(text_a, text_b) as pair:
+        result = run_wdiff(pair.path_a, pair.path_b)
         tokens = _parse_wdiff_tokens(result.stdout)
-    finally:
-        os.unlink(a_path)
-        os.unlink(b_path)
 
     # Walk tokens, tracking positions in both original texts
     diffs = []

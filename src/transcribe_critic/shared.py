@@ -15,7 +15,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass, field, replace
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import builtins
 
@@ -134,6 +134,60 @@ def normalize_for_comparison(text: str) -> str:
         cleaned = re.sub(r'[^\w]', '', w).lower()
         normalized.append(cleaned if cleaned else '_')
     return ' '.join(normalized)
+
+
+class WdiffNotFound(RuntimeError):
+    """The wdiff binary is not on PATH.
+
+    Raised by wdiff_pair() so every caller sees one named failure instead of a
+    bare FileNotFoundError from subprocess. Callers that can degrade gracefully
+    should catch this; the rest let it propagate as a clear diagnostic.
+    """
+
+
+def wdiff_available() -> bool:
+    """Return True if the wdiff binary is on PATH."""
+    return shutil.which("wdiff") is not None
+
+
+class WdiffPair(NamedTuple):
+    """Two temp files staged for wdiff, plus the text actually written."""
+    path_a: str
+    path_b: str
+    text_a: str
+    text_b: str
+
+
+@contextmanager
+def wdiff_pair(text_a: str, text_b: str, normalize: bool = True):
+    """Stage two texts as temp files for wdiff, cleaning both up on exit.
+
+    Normalizes by default (wdiff is used for alignment, where casing and
+    punctuation are noise). The normalized text is returned alongside the paths
+    because callers need word counts that match what wdiff actually saw.
+
+    Raises WdiffNotFound if the binary is missing, so the check happens once
+    here rather than being re-derived — or forgotten — at each call site.
+    """
+    if not wdiff_available():
+        raise WdiffNotFound("wdiff not found on PATH")
+    a_text = normalize_for_comparison(text_a) if normalize else text_a
+    b_text = normalize_for_comparison(text_b) if normalize else text_b
+    a_path = b_path = None
+    try:
+        a_path = write_temp_text(a_text)
+        b_path = write_temp_text(b_text)
+        yield WdiffPair(a_path, b_path, a_text, b_text)
+    finally:
+        for path in (a_path, b_path):
+            if path:
+                os.unlink(path)
+
+
+def run_wdiff(path_a: str, path_b: str, stats: bool = False) -> subprocess.CompletedProcess:
+    """Run wdiff over two staged files. `stats` adds -s for summary output."""
+    cmd = ["wdiff"] + (["-s"] if stats else []) + [path_a, path_b]
+    return subprocess.run(cmd, capture_output=True, text=True)
 
 
 def is_whisper_model(name: str) -> bool:

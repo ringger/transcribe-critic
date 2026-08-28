@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -33,6 +34,10 @@ from transcribe_critic.shared import (
     llm_call_with_retry,
     resolve_stage_config,
     run_command,
+    run_wdiff,
+    wdiff_available,
+    wdiff_pair,
+    WdiffNotFound,
 )
 
 
@@ -1019,3 +1024,88 @@ class TestSpeechConfigModels:
     def test_empty_models_stays_empty(self, tmp_path):
         config = SpeechConfig(url="x", output_dir=tmp_path, models=[])
         assert config.models == []
+
+
+# ---------------------------------------------------------------------------
+# wdiff helpers
+# ---------------------------------------------------------------------------
+
+class TestWdiffPair:
+    def test_yields_two_distinct_existing_files(self):
+        with wdiff_pair("alpha beta", "alpha gamma") as pair:
+            assert pair.path_a != pair.path_b
+            assert os.path.exists(pair.path_a)
+            assert os.path.exists(pair.path_b)
+
+    def test_removes_both_temp_files_on_exit(self):
+        with wdiff_pair("alpha beta", "alpha gamma") as pair:
+            paths = (pair.path_a, pair.path_b)
+        assert not any(os.path.exists(p) for p in paths)
+
+    def test_removes_temp_files_when_body_raises(self):
+        paths = []
+        with pytest.raises(ValueError):
+            with wdiff_pair("alpha", "beta") as pair:
+                paths.extend([pair.path_a, pair.path_b])
+                raise ValueError("boom")
+        assert paths and not any(os.path.exists(p) for p in paths)
+
+    def test_normalizes_by_default(self):
+        with wdiff_pair("Hello, World!", "hello world") as pair:
+            assert pair.text_a == "hello world"
+            assert Path(pair.path_a).read_text() == "hello world"
+
+    def test_normalize_false_writes_original_text(self):
+        with wdiff_pair("Hello, World!", "x") as pair:
+            assert pair.text_a == "hello world"
+        with wdiff_pair("Hello, World!", "x", normalize=False) as pair:
+            assert pair.text_a == "Hello, World!"
+
+    def test_normalized_text_word_count_matches_original(self):
+        """Callers size alignment maps off pair.text_a, so counts must agree."""
+        original = "Hello --- world, friend!"
+        with wdiff_pair(original, "x") as pair:
+            assert len(pair.text_a.split()) == len(original.split())
+
+    @patch("transcribe_critic.shared.shutil.which", return_value=None)
+    def test_raises_named_error_when_wdiff_missing(self, mock_which):
+        with pytest.raises(WdiffNotFound):
+            with wdiff_pair("a", "b"):
+                pass
+
+    @patch("transcribe_critic.shared.shutil.which", return_value=None)
+    def test_leaves_no_temp_files_when_wdiff_missing(self, mock_which, tmp_path):
+        before = set(os.listdir(tempfile.gettempdir()))
+        with pytest.raises(WdiffNotFound):
+            with wdiff_pair("a", "b"):
+                pass
+        assert set(os.listdir(tempfile.gettempdir())) == before
+
+
+class TestWdiffAvailable:
+    @patch("transcribe_critic.shared.shutil.which", return_value="/usr/bin/wdiff")
+    def test_true_when_on_path(self, mock_which):
+        assert wdiff_available() is True
+
+    @patch("transcribe_critic.shared.shutil.which", return_value=None)
+    def test_false_when_absent(self, mock_which):
+        assert wdiff_available() is False
+
+
+class TestRunWdiff:
+    def test_plain_run_emits_diff_markup(self):
+        with wdiff_pair("the quick brown fox", "the quick red fox") as pair:
+            out = run_wdiff(pair.path_a, pair.path_b).stdout
+        assert "[-brown-]" in out
+        assert "{+red+}" in out
+
+    def test_identical_texts_have_no_markup(self):
+        with wdiff_pair("same words here", "same words here") as pair:
+            out = run_wdiff(pair.path_a, pair.path_b).stdout
+        assert "[-" not in out
+        assert "{+" not in out
+
+    def test_stats_flag_reports_common_percentage(self):
+        with wdiff_pair("alpha beta gamma", "alpha beta gamma") as pair:
+            result = run_wdiff(pair.path_a, pair.path_b, stats=True)
+        assert "100% common" in (result.stdout + result.stderr)

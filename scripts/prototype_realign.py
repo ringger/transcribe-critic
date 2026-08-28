@@ -29,13 +29,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from transcribe_critic.shared import (
     ALL_MODELS, get_model_quality_rank, discover_models_with_json,
+    normalize_for_comparison,
 )
 from transcribe_critic.transcription import (
     _apply_resolutions,
     _filter_trivial_diffs,
     _load_model_confidence,
     _merge_pairwise_diffs,
-    _normalize_for_comparison,
     _parse_wdiff_diffs,
 )
 

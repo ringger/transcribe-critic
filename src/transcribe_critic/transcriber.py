@@ -68,6 +68,7 @@ from transcribe_critic.shared import (
     ANALYSIS_MD, SLIDE_TIMESTAMPS_JSON,
     run_command, _print_reusing, _dry_run_skip, _should_skip,
     _collect_source_paths, _is_url, check_dependencies,
+    normalize_for_comparison,
     timed,
 )
 
@@ -172,7 +173,6 @@ from transcribe_critic.diarization import diarize_audio
 # Merge logic
 from transcribe_critic.merge import (
     _extract_text_from_html,
-    _normalize_for_comparison,
     _detect_transcript_structure,
     _parse_structured_transcript,
     _format_structured_segments,
@@ -556,7 +556,7 @@ def analyze_source_survival(config: SpeechConfig, data: SpeechData) -> None:
         return
 
     # Run wdiff comparison of merged vs each source
-    merged_words = len(_normalize_for_comparison(merged_clean).split())
+    merged_words = len(normalize_for_comparison(merged_clean).split())
     results = []
 
     for name, source_text in sources:

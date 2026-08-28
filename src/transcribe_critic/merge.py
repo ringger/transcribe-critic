@@ -6,10 +6,7 @@ for unbiased adjudication of differences between transcript sources.
 """
 
 import json
-import os
 import re
-import shutil
-import subprocess
 import time
 
 from transcribe_critic.prompts import load_prompt
@@ -17,14 +14,10 @@ from transcribe_critic.shared import (
     tprint as print,
     fmt_elapsed,
     SpeechConfig, COMMON_WORDS,
-    write_temp_text, normalize_for_comparison,
+    wdiff_pair, run_wdiff, wdiff_available,
     create_llm_client, llm_call_with_retry, resolve_stage_config,
     is_up_to_date, _save_json, validate_checkpoint_version,
 )
-
-# Backward-compatible aliases (used by transcription.py and transcriber.py)
-_write_temp_text = write_temp_text
-_normalize_for_comparison = normalize_for_comparison
 
 
 def _extract_text_from_html(html: str) -> str:
@@ -96,35 +89,18 @@ def _analyze_differences_wdiff(text_a: str, text_b: str, config: SpeechConfig,
     Returns a list of differences with types: 'a_only', 'b_only', 'changed'.
     """
 
-    # Check if wdiff is available
-    if not shutil.which("wdiff"):
+    if not wdiff_available():
         if config.verbose:
             print("  wdiff not found, skipping diff analysis")
         return []
 
-    # Normalize both texts for comparison
-    a_normalized = _normalize_for_comparison(text_a)
-    b_normalized = _normalize_for_comparison(text_b)
-
-    a_file = _write_temp_text(a_normalized)
-    b_file = _write_temp_text(b_normalized)
-
-    try:
-        # Run wdiff
-        result = subprocess.run(
-            ["wdiff", "-s", a_file, b_file],
-            capture_output=True,
-            text=True
-        )
+    with wdiff_pair(text_a, text_b) as pair:
+        # Stats run (-s) for the verbose summary, plain run for the diff markup
+        result = run_wdiff(pair.path_a, pair.path_b, stats=True)
 
         differences = []
 
-        # Also run wdiff without -s to get actual differences
-        diff_result = subprocess.run(
-            ["wdiff", a_file, b_file],
-            capture_output=True,
-            text=True
-        )
+        diff_result = run_wdiff(pair.path_a, pair.path_b)
 
         # Parse differences - look for [-deleted-] and {+inserted+}
         diff_output = diff_result.stdout
@@ -157,11 +133,6 @@ def _analyze_differences_wdiff(text_a: str, text_b: str, config: SpeechConfig,
             print(f"  wdiff stats ({label_a} vs {label_b}): {result.stderr.strip()}")
 
         return differences
-
-    finally:
-        # Clean up temp files
-        os.unlink(a_file)
-        os.unlink(b_file)
 
 
 def _filter_meaningful_diffs(differences: list) -> list:
@@ -223,25 +194,14 @@ def _build_wdiff_alignment(text_a: str, text_b: str,
     in text_a. The extra entry at the end provides the boundary for the
     last segment.
     """
-    norm_a = _normalize_for_comparison(text_a)
-    norm_b = _normalize_for_comparison(text_b)
-
-    a_path = None
-    b_path = None
-    try:
-        a_path = _write_temp_text(norm_a)
-        b_path = _write_temp_text(norm_b)
-
-        result = subprocess.run(
-            ["wdiff", a_path, b_path],
-            capture_output=True, text=True
-        )
+    with wdiff_pair(text_a, text_b) as pair:
+        result = run_wdiff(pair.path_a, pair.path_b)
 
         tokens = _parse_wdiff_tokens(result.stdout)
 
         a_pos = 0
         b_pos = 0
-        a_word_count = len(norm_a.split())
+        a_word_count = len(pair.text_a.split())
         ext_to_other = [0] * (a_word_count + 1)
 
         for token_type, text in tokens:
@@ -264,12 +224,6 @@ def _build_wdiff_alignment(text_a: str, text_b: str,
         ext_to_other[a_word_count] = b_pos
 
         return ext_to_other
-
-    finally:
-        if a_path:
-            os.unlink(a_path)
-        if b_path:
-            os.unlink(b_path)
 
 
 def _format_differences(differences: list) -> str:
@@ -827,26 +781,15 @@ def _wdiff_stats(text_a: str, text_b: str) -> dict:
       'a': {'words': int, 'common': int, 'common_pct': float}
       'b': {'words': int, 'common': int, 'common_pct': float}
     """
-    norm_a = _normalize_for_comparison(text_a)
-    norm_b = _normalize_for_comparison(text_b)
-
-    a_path = None
-    b_path = None
-    try:
-        a_path = _write_temp_text(norm_a)
-        b_path = _write_temp_text(norm_b)
-
-        result = subprocess.run(
-            ["wdiff", "-s", a_path, b_path],
-            capture_output=True, text=True
-        )
+    with wdiff_pair(text_a, text_b) as pair:
+        result = run_wdiff(pair.path_a, pair.path_b, stats=True)
         # wdiff puts stats on stdout (after the diff output)
         output = result.stdout + result.stderr
 
         # Parse stats lines: "/path/to/file: N words  M PP% common  ..."
         wdiff_stat_re = re.compile(r'(\d+)\s+words\s+(\d+)\s+(\d+)%\s+common')
         stats = {}
-        for key, path in [('a', a_path), ('b', b_path)]:
+        for key, path in [('a', pair.path_a), ('b', pair.path_b)]:
             for line in output.strip().split('\n'):
                 if path in line:
                     m = wdiff_stat_re.search(line)
@@ -858,8 +801,3 @@ def _wdiff_stats(text_a: str, text_b: str) -> dict:
                         }
                     break
         return stats
-    finally:
-        if a_path:
-            os.unlink(a_path)
-        if b_path:
-            os.unlink(b_path)

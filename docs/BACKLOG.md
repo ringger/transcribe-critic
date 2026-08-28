@@ -22,6 +22,14 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Qwen3-ASR token limit.** Default `max_tokens=8192` insufficient for 5-min chunks. Workaround in place (`max_tokens=32768`). Should file upstream bug or contribute fix.
 
+## Transcript Sources
+
+- **`clean_vtt_captions` dedupes globally, dropping repeated lines.** The cue filter keeps a file-wide `seen` set, so any cue text that appeared earlier is discarded everywhere it recurs — not just adjacent to its first occurrence. Measured on `9O7e-7j0wO4` (8-minute video, creator-uploaded caption track): **8 of 59 cue lines dropped, 13.5%**. Repeated refrains and repeated short utterances vanish entirely.
+  - *Why it exists*: YouTube auto-captions emit rolling duplicates as text scrolls, and global dedup collapses them. But it overshoots badly on any repetitive content — songs, refrains, a speaker repeating for emphasis, recurring stock phrases.
+  - *Impact*: captions feed the merge as a witness, so the merge silently receives a lossy version of the source. Fails quietly; nothing in the output indicates lines were removed.
+  - *Fix*: dedupe only **consecutive** repeats rather than globally. Preserves legitimate repetition while still collapsing the scroll artifact.
+  - *Caveat*: changes what the merge sees, so it will shift results on anything already run. Worth re-running affected transcripts after the change, and worth checking whether the auto-caption scroll artifact is actually consecutive in practice before assuming the narrower rule covers it.
+
 ## Hypothesis Reassessment at Disagreement Points
 
 - **Parakeet TDT forced alignment.** TDT decoder exposes logits via joint network — architecturally feasible to score candidate token sequences against encoder output. Blocked on SentencePiece tokenizer extraction (not bundled in HF cache or .nemo archive).

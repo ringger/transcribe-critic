@@ -4,6 +4,8 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from transcribe_critic.shared import SpeechConfig, SpeechData
 
 from transcribe_critic.download import clean_vtt_captions, download_media
@@ -44,6 +46,21 @@ class TestCleanVttCaptions:
         )
         result = clean_vtt_captions(vtt)
         assert result.count("Hello world.") == 1
+
+    def test_short_form_cue_timestamps(self, tmp_path):
+        """WebVTT allows MM:SS.mmm cues with no hour field. These miss the
+        HH:MM:SS timestamp pattern and must still be dropped as cue lines."""
+        vtt = tmp_path / "captions.vtt"
+        vtt.write_text(
+            "WEBVTT\n\n"
+            "00:01.000 --> 00:03.000\n"
+            "Hello world.\n\n"
+            "00:03.000 --> 00:05.000\n"
+            "Second line.\n"
+        )
+        result = clean_vtt_captions(vtt)
+        assert result == "Hello world. Second line."
+        assert "-->" not in result
 
     def test_strips_html_tags(self, tmp_path):
         vtt = tmp_path / "captions.vtt"
@@ -126,6 +143,143 @@ class TestDownloadMedia:
         # Should not raise
         download_media(config, data)
         assert data.captions_path is None
+
+    @patch("transcribe_critic.download.run_command")
+    def test_audio_failure_still_fetches_captions(self, mock_run, tmp_path):
+        """A failed media fetch must not prevent captions from being retrieved.
+
+        Extraction can succeed while the media download fails (stale signatures →
+        HTTP 403, unavailable format, ffmpeg postprocessing), and captions come
+        from a different endpoint that is still reachable.
+        """
+        def side_effect(cmd, desc, verbose=False):
+            if "--dump-json" in cmd:
+                return MagicMock(stdout=json.dumps({"title": "T", "id": "x"}))
+            if "-x" in cmd:  # audio extraction
+                raise subprocess.CalledProcessError(1, cmd)
+            if "--write-sub" in cmd:
+                (tmp_path / "captions.en.vtt").write_text("WEBVTT\n")
+            return MagicMock(stdout="", stderr="")
+        mock_run.side_effect = side_effect
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=True, skip_existing=False)
+        data = SpeechData()
+
+        # The stage still fails, so downstream steps do not run on missing audio...
+        with pytest.raises(subprocess.CalledProcessError):
+            download_media(config, data)
+
+        # ...but the captions were fetched and recorded before it did.
+        assert (tmp_path / "captions.en.vtt").exists()
+        assert data.captions_path == tmp_path / "captions.en.vtt"
+
+    @patch("transcribe_critic.download.run_command")
+    def test_video_failure_still_fetches_captions(self, mock_run, tmp_path):
+        """Video download has the same independence from captions as audio."""
+        def side_effect(cmd, desc, verbose=False):
+            if "--dump-json" in cmd:
+                return MagicMock(stdout=json.dumps({"title": "T", "id": "x"}))
+            if "-f" in cmd and "mp4" in cmd:
+                raise subprocess.CalledProcessError(1, cmd)
+            if "--write-sub" in cmd:
+                (tmp_path / "captions.en.vtt").write_text("WEBVTT\n")
+            return MagicMock(stdout="", stderr="")
+        mock_run.side_effect = side_effect
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=False, skip_existing=False)
+        data = SpeechData()
+
+        with pytest.raises(subprocess.CalledProcessError):
+            download_media(config, data)
+
+        assert data.captions_path == tmp_path / "captions.en.vtt"
+
+    @patch("transcribe_critic.download.run_command")
+    def test_both_media_failures_still_fetch_captions(self, mock_run, tmp_path):
+        """Audio and video both failing must still leave captions on disk."""
+        def side_effect(cmd, desc, verbose=False):
+            if "--dump-json" in cmd:
+                return MagicMock(stdout=json.dumps({"title": "T", "id": "x"}))
+            if "-x" in cmd or ("-f" in cmd and "mp4" in cmd):
+                raise subprocess.CalledProcessError(1, cmd)
+            if "--write-sub" in cmd:
+                (tmp_path / "captions.en.vtt").write_text("WEBVTT\n")
+            return MagicMock(stdout="", stderr="")
+        mock_run.side_effect = side_effect
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=False, skip_existing=False)
+        data = SpeechData()
+
+        with pytest.raises(subprocess.CalledProcessError):
+            download_media(config, data)
+
+        assert data.captions_path == tmp_path / "captions.en.vtt"
+
+    @patch("transcribe_critic.download.run_command")
+    def test_captions_attempted_even_when_audio_fails_and_captions_absent(
+            self, mock_run, tmp_path, capsys):
+        """A failing audio fetch must not stop the captions call from being made,
+        even when the video turns out to have no captions either."""
+        def side_effect(cmd, desc, verbose=False):
+            if "--dump-json" in cmd:
+                return MagicMock(stdout=json.dumps({"title": "T", "id": "x"}))
+            if "-x" in cmd:
+                raise subprocess.CalledProcessError(1, cmd)
+            if "--write-sub" in cmd:
+                raise subprocess.CalledProcessError(1, cmd)
+            return MagicMock(stdout="", stderr="")
+        mock_run.side_effect = side_effect
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=True, skip_existing=False)
+        data = SpeechData()
+
+        with pytest.raises(subprocess.CalledProcessError):
+            download_media(config, data)
+
+        assert any("--write-sub" in c[0][0] for c in mock_run.call_args_list)
+        assert data.captions_path is None
+        assert "No captions available" in capsys.readouterr().out
+
+    @patch("transcribe_critic.download.run_command", side_effect=_mock_run_command_for_download)
+    def test_reuses_cached_metadata(self, mock_run, tmp_path, capsys):
+        """With skip_existing, metadata.json is read from disk instead of re-fetched."""
+        cached = {"url": "https://example.com/v", "title": "Cached Title",
+                  "video_id": "abc123", "channel": "C"}
+        (tmp_path / "metadata.json").write_text(json.dumps(cached))
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=True, skip_existing=True)
+        data = SpeechData()
+        download_media(config, data)
+
+        assert data.title == "Cached Title"
+        assert data.metadata["video_id"] == "abc123"
+        assert "Reusing cached metadata" in capsys.readouterr().out
+        assert not any("--dump-json" in c[0][0] for c in mock_run.call_args_list)
+
+    @patch("transcribe_critic.download.run_command", side_effect=_mock_run_command_for_download)
+    def test_reuses_existing_video(self, mock_run, tmp_path):
+        """A present video.mp4 is not re-downloaded under skip_existing."""
+        (tmp_path / "video.mp4").write_text("fake video")
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=False, skip_existing=True)
+        data = SpeechData()
+        download_media(config, data)
+
+        video_calls = [c for c in mock_run.call_args_list if "mp4" in c[0][0]]
+        assert len(video_calls) == 0
+        assert data.video_path == tmp_path / "video.mp4"
+
+    @patch("transcribe_critic.download.run_command")
+    def test_prefers_uploaded_caption_track(self, mock_run, tmp_path):
+        """--write-sub must precede --write-auto-sub so yt-dlp takes the
+        creator-uploaded track when one exists."""
+        mock_run.side_effect = _mock_run_command_for_download
+        config = SpeechConfig(url="https://example.com/v", output_dir=tmp_path,
+                              no_slides=True, skip_existing=False)
+        download_media(config, SpeechData())
+        caption_cmd = next(c[0][0] for c in mock_run.call_args_list
+                           if "--skip-download" in c[0][0])
+        assert caption_cmd.index("--write-sub") < caption_cmd.index("--write-auto-sub")
 
     @patch("transcribe_critic.download.run_command", side_effect=_mock_run_command_for_download)
     def test_dry_run_skips_downloads(self, mock_run, tmp_path, capsys):

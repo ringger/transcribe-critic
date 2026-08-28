@@ -72,18 +72,29 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
         with open(metadata_path) as f:
             data.metadata = json.load(f)
 
+    # Media fetches are independent of captions: extraction can succeed while a
+    # media download fails (stale signatures → HTTP 403, unavailable format, ffmpeg
+    # postprocessing). Collect failures and keep going so captions — which a
+    # captions-only run is all that is wanted — are still retrieved, then re-raise
+    # below so the stage itself still reports failure.
+    media_failures = []
+
     # Download audio
     audio_path = config.output_dir / AUDIO_MP3
     if _should_skip(config, audio_path, "download audio"):
         pass
     else:
         print("  Downloading audio...")
-        run_command(
-            ["yt-dlp", *cookies, "-x", "--audio-format", "mp3",
-             "-o", str(config.output_dir / "audio.%(ext)s"), config.url],
-            "downloading audio",
-            config.verbose
-        )
+        try:
+            run_command(
+                ["yt-dlp", *cookies, "-x", "--audio-format", "mp3",
+                 "-o", str(config.output_dir / "audio.%(ext)s"), config.url],
+                "downloading audio",
+                config.verbose
+            )
+        except subprocess.CalledProcessError as exc:
+            media_failures.append(exc)
+            print("  Audio download failed — continuing to captions")
     data.audio_path = audio_path
 
     # Download video (only needed for slide extraction)
@@ -96,12 +107,16 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
             pass
         else:
             print("  Downloading video...")
-            run_command(
-                ["yt-dlp", *cookies, "-f", "mp4",
-                 "-o", str(config.output_dir / "video.%(ext)s"), config.url],
-                "downloading video",
-                config.verbose
-            )
+            try:
+                run_command(
+                    ["yt-dlp", *cookies, "-f", "mp4",
+                     "-o", str(config.output_dir / "video.%(ext)s"), config.url],
+                    "downloading video",
+                    config.verbose
+                )
+            except subprocess.CalledProcessError as exc:
+                media_failures.append(exc)
+                print("  Video download failed — continuing to captions")
         data.video_path = video_path
 
     # Download captions if available (skip for podcasts — no captions)
@@ -130,6 +145,11 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
     if captions_path.exists():
         data.captions_path = captions_path
         print(f"  Captions saved: {captions_path.name}")
+
+    # Captions are on disk now; surface the deferred media failure so downstream
+    # stages do not run against missing audio.
+    if media_failures:
+        raise media_failures[0]
 
 
 def clean_vtt_captions(vtt_path: Path) -> str:

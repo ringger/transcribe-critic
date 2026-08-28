@@ -44,6 +44,7 @@ transcripts/
 # Eval data and runs (large, not committed)
 eval-data/
 eval-runs/
+runs/
 
 # Build artifacts
 dist/

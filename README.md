@@ -482,6 +482,26 @@ pip install 'transcribe-critic[mlx-audio]'  # Granite + Qwen3-ASR only
 
 These are Apple Silicon only (ARM64 macOS).
 
+### YouTube download fails with `HTTP Error 403: Forbidden`
+
+Almost always a stale `yt-dlp`. YouTube changes its extraction surface every few
+weeks, and an out-of-date `yt-dlp` fails on audio while still succeeding on
+metadata and captions — so the pipeline can report the title correctly and then
+die on the download:
+
+```bash
+pip install -U yt-dlp
+```
+
+The dependency floor is bumped when a release is known to break, but yt-dlp goes
+stale faster than this package releases. The pipeline warns at startup once your
+installed version is more than 60 days old; take that warning seriously before
+debugging anything else.
+
+A separate warning about "No supported JavaScript runtime" may also appear. It is
+non-fatal — YouTube downloads work without it. Install `deno` only if you hit
+missing-format errors that a `yt-dlp` upgrade does not resolve.
+
 ### wdiff not found
 
 Required for alignment-based merging:

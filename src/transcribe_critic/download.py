@@ -113,8 +113,13 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
     else:
         print("  Downloading captions (if available)...")
         try:
+            # --write-sub before --write-auto-sub: yt-dlp prefers the creator-uploaded
+            # track when one exists and falls back to machine-generated captions
+            # otherwise. Uploaded tracks are human-authored — punctuated, capitalized,
+            # correct proper nouns — so they are a far stronger merge witness.
             run_command(
-                ["yt-dlp", *cookies, "--write-auto-sub", "--sub-lang", "en", "--skip-download",
+                ["yt-dlp", *cookies, "--write-sub", "--write-auto-sub",
+                 "--sub-lang", "en", "--skip-download",
                  "-o", str(config.output_dir / "captions.%(ext)s"), config.url],
                 "downloading captions",
                 config.verbose

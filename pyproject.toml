@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 dependencies = [
-    "yt-dlp>=2026.6.9",
+    "yt-dlp>=2026.8.19",
     "openai",
     "anthropic",
     "numpy",

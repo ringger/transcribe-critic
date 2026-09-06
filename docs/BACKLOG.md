@@ -22,6 +22,16 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Qwen3-ASR token limit.** Default `max_tokens=8192` insufficient for 5-min chunks. Workaround in place (`max_tokens=32768`). Should file upstream bug or contribute fix.
 
+## Download / Acquisition
+
+- **yt-dlp extractor fragility is a standing operational risk, not a bug to fix.** Source support is per-site reverse engineering, not a shared protocol: yt-dlp ships **1,751 extractors**, five of them Facebook-specific (`facebook`, `facebook:reel`, `facebook:ads`, `FacebookPluginsVideo`, `FacebookRedirectURL`). The `facebook:reel` extractor is what made the 2026-09-05 reel run work.
+  - *Why it breaks*: the transport layer is genuinely common — HTML5 video over DASH/HLS manifests pointing at fragmented MP4 — but that only applies **after** the extractor has located the manifest. Getting there means parsing site-private page structure (Facebook buries media URLs in inline GraphQL blobs behind session tokens and signed, expiring URLs). None of it is standardized or documented, and it changes without notice.
+  - *Blast radius*: only the `download` stage. Everything from `audio.mp3`/`audio.wav` onward — ASR, diarize, merge, summarize — is source-agnostic and unaffected. A Facebook reel and a podcast enclosure are identical at that boundary.
+  - *Worst offenders*: Facebook, Instagram, X — login walls and token churn. `--cookies-from-browser {safari,chrome}` exists for exactly this; public reels don't need it, gated content does.
+  - *Already mitigated*: yt-dlp version floor is refreshed periodically (`0ca82de`), and caption download is decoupled from media download failure (`dad80ef`) so one broken track no longer sinks the run.
+  - *Proposed — record provenance*: `metadata.json` currently stores url/id/title/channel/date/duration but **not** the extractor name or yt-dlp version. Adding both makes post-hoc "why did this run fail / why does this transcript look different" answerable without guessing. Cheap, and the single highest-value item here.
+  - *Proposed — actionable failure message*: when a download fails, distinguish extractor breakage from network/auth failure and tell the user to upgrade yt-dlp first, since that is nearly always the fix. Currently the failure surfaces as a generic error and invites debugging the wrong layer.
+
 ## Transcript Sources
 
 - **`clean_vtt_captions` dedupes globally, dropping repeated lines.** The cue filter keeps a file-wide `seen` set, so any cue text that appeared earlier is discarded everywhere it recurs — not just adjacent to its first occurrence. Measured on `9O7e-7j0wO4` (8-minute video, creator-uploaded caption track): **8 of 59 cue lines dropped, 13.5%**. Repeated refrains and repeated short utterances vanish entirely.

@@ -55,3 +55,8 @@ build/
 
 # Pipeline logs
 logs/
+
+# Exception: the Kev adjudication experiment keeps its small outputs and logs with
+# its scripts (brought from the jev project; 5 MB of text).
+!experiments/kev-adjudication/runs/
+!experiments/kev-adjudication/logs/

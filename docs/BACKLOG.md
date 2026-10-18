@@ -61,6 +61,4 @@ See `docs/experiments.md` for results of completed experiments.
 
 - **Test stronger local adjudicator.** Local adjudicator gave neutral ensemble results. Try Llama 3.3 70B or Qwen 2.5 72B to close the gap with Claude Sonnet adjudication without API cost.
 
-- **Record the Kev decision-model adjudication in `experiments.md`.** On 2026-09-23 the sibling `jev` project ran Kev-9B (an open System One decision model, Choice questions over the A/B/C readings) as the adjudicator on Rev16 files 3/4/9 via `jev/kev_adjudicate.py`, reusing this project's diff / cluster / apply functions. Result neutral: 24.9% WER vs 24.7% parakeet alone; near-uniform probabilities; a confidence-threshold sweep converges to parakeet. Text-only signal is thin on vernacular audio; no podcast-specific fine-tune pursued. Add a short entry pointing at `jev/EXPERIMENTS.md` §1 so nobody reruns it.
-
 - **Per-diff oracle labels from Rev16 references (adjudicator ceiling).** Align each Rev16 reference STM to the parakeet base transcript and label which reading is correct at each multi-way diff, to report the oracle WER ceiling any adjudicator could reach (and, if ever wanted, training data for a learned adjudicator). Parked 2026-09-23 with the Kev work; worth doing only if the ceiling question comes up again.

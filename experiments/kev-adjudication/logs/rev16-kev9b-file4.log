@@ -1,0 +1,41 @@
+base=parakeet others=['qwen3-asr', 'distil-large-v3'] loops_collapsed=0
+  qwen3-asr vs parakeet: 990 meaningful diffs
+  distil-large-v3 vs parakeet: 1087 meaningful diffs
+  1675 multi-way diffs in 193 clusters
+  reference checkpoints found for 193/193 clusters
+  cluster 1/193 (7 diffs, 1620.2 ms) elapsed 2s
+  cluster 11/193 (2 diffs, 648.9 ms) elapsed 22s
+  cluster 21/193 (32 diffs, 6865.9 ms) elapsed 60s
+  cluster 31/193 (8 diffs, 1654.6 ms) elapsed 108s
+  cluster 41/193 (7 diffs, 1514.3 ms) elapsed 122s
+  cluster 51/193 (23 diffs, 7121.0 ms) elapsed 167s
+  cluster 61/193 (1 diffs, 351.8 ms) elapsed 207s
+  cluster 71/193 (5 diffs, 1267.4 ms) elapsed 220s
+  cluster 81/193 (7 diffs, 1520.2 ms) elapsed 243s
+  cluster 91/193 (2 diffs, 629.2 ms) elapsed 252s
+  cluster 101/193 (2 diffs, 561.3 ms) elapsed 268s
+  cluster 111/193 (7 diffs, 1535.6 ms) elapsed 288s
+  cluster 121/193 (3 diffs, 697.7 ms) elapsed 308s
+  cluster 131/193 (7 diffs, 1572.4 ms) elapsed 318s
+  cluster 141/193 (15 diffs, 3428.3 ms) elapsed 333s
+  cluster 151/193 (1 diffs, 383.7 ms) elapsed 352s
+  cluster 161/193 (16 diffs, 4047.0 ms) elapsed 365s
+  cluster 171/193 (5 diffs, 1335.1 ms) elapsed 377s
+  cluster 181/193 (5 diffs, 1240.4 ms) elapsed 385s
+  cluster 191/193 (4 diffs, 951.9 ms) elapsed 406s
+{
+  "src_dir": "/Users/ringger/Projects/transcribe-critic/eval-runs/rev16-asr-backends/file4",
+  "models": [
+    "parakeet",
+    "qwen3-asr",
+    "distil-large-v3"
+  ],
+  "base_model": "parakeet",
+  "n_diffs": 1675,
+  "n_clusters": 193,
+  "n_resolved": 1675,
+  "ref_compared": 1675,
+  "ref_agree": 797,
+  "ref_agreement": 0.47582089552238804,
+  "elapsed_s": 408.1
+}

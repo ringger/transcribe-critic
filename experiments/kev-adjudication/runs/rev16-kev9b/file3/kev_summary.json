@@ -1,0 +1,16 @@
+{
+  "src_dir": "/Users/ringger/Projects/transcribe-critic/eval-runs/rev16-asr-backends/file3",
+  "models": [
+    "parakeet",
+    "qwen3-asr",
+    "distil-large-v3"
+  ],
+  "base_model": "parakeet",
+  "n_diffs": 1542,
+  "n_clusters": 212,
+  "n_resolved": 1542,
+  "ref_compared": 1520,
+  "ref_agree": 685,
+  "ref_agreement": 0.4506578947368421,
+  "elapsed_s": 341.8
+}

@@ -1,0 +1,80 @@
+Scoring 3 files against runs/rev16-kev9b
+Metrics: wer
+Hypothesis: all
+
+  Scoring 3...
+    asr_distil-large-v3: WER=29.6%
+    asr_merged_kev: WER=27.5%
+    asr_parakeet: WER=27.3%
+    asr_qwen3-asr: WER=28.0%
+  Scoring 4...
+    asr_distil-large-v3: WER=27.6%
+    asr_merged_kev: WER=26.5%
+    asr_parakeet: WER=26.5%
+    asr_qwen3-asr: WER=26.9%
+  Scoring 9...
+    asr_distil-large-v3: WER=21.6%
+    asr_merged_kev: WER=20.8%
+    asr_parakeet: WER=20.4%
+    asr_qwen3-asr: WER=21.1%
+
+
+=== asr_distil-large-v3 ===
+
+File ID     Duration  WER     
+----------- --------- ------- 
+3           2:12:11   29.6%   
+4           2:06:13   27.6%   
+9           49:34     21.6%   
+----------- --------- ------- 
+AVERAGE               26.3%   
+WEIGHTED              27.5%   
+
+
+=== asr_merged_kev ===
+
+File ID     Duration  WER     
+----------- --------- ------- 
+3           2:12:11   27.5%   
+4           2:06:13   26.5%   
+9           49:34     20.8%   
+----------- --------- ------- 
+AVERAGE               24.9%   
+WEIGHTED              26.0%   
+
+
+=== asr_parakeet ===
+
+File ID     Duration  WER     
+----------- --------- ------- 
+3           2:12:11   27.3%   
+4           2:06:13   26.5%   
+9           49:34     20.4%   
+----------- --------- ------- 
+AVERAGE               24.7%   
+WEIGHTED              25.9%   
+
+
+=== asr_qwen3-asr ===
+
+File ID     Duration  WER     
+----------- --------- ------- 
+3           2:12:11   28.0%   
+4           2:06:13   26.9%   
+9           49:34     21.1%   
+----------- --------- ------- 
+AVERAGE               25.3%   
+WEIGHTED              26.4%   
+
+
+=== Summary: All Variants ===
+
+Variant               WER (avg)   WER (wtd)   
+--------------------- ----------- ----------- 
+asr_distil-large-v3   26.3%       27.5%       
+asr_merged_kev        24.9%       26.0%       
+asr_parakeet          24.7%       25.9%       
+asr_qwen3-asr         25.3%       26.4%       
+--------------------- ----------- ----------- 
+
+Results written to runs/rev16-kev9b/results.md

@@ -126,6 +126,17 @@ The prototype works correctly and doesn't regress, but we have not yet found aud
 
 ---
 
+## Kev-9B Decision Model as Adjudicator (2026-09-23)
+
+Kev-9B, an open System One decision model, replaced the LLM adjudicator: each
+disagreement became a Choice question over the distinct readings, reusing this
+project's diff extraction, clustering and resolution. On Rev16 files 3, 4 and 9
+the merge scored 24.9% WER against 24.7% for parakeet alone (the local
+qwen2.5:14b merge: 24.8%). Kev's probabilities sit near uniform, and a
+confidence-threshold sweep converges to parakeet, so no confident subset is worth
+keeping. Full write-up, scripts, outputs and logs:
+`experiments/kev-adjudication/`.
+
 ## Key Takeaways
 
 1. **Parakeet standalone is hard to beat on podcast audio.** No ensemble method tested improves over parakeet's 20.4-27.3% WER across Rev16 files.

@@ -1,0 +1,331 @@
+{
+  "variants": {
+    "asr_distil-large-v3": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.29633783208940795
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.2764291926939195
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2156977882168722
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.2628216043333999,
+        "wer_weighted": 0.27519976300857063
+      },
+      "num_files": 3
+    },
+    "asr_merged_kev": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.2754940252910012
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.26476634775045466
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2081620669406929
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24947414666071624,
+        "wer_weighted": 0.26026063943381716
+      },
+      "num_files": 3
+    },
+    "asr_merged_kev_t0": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.2754940252910012
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.26476634775045466
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2081620669406929
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24947414666071624,
+        "wer_weighted": 0.26026063943381716
+      },
+      "num_files": 3
+    },
+    "asr_merged_kev_t0.1": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.2747979426891991
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.26405471653356527
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.20669406928948914
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24851557617075115,
+        "wer_weighted": 0.2594339496786245
+      },
+      "num_files": 3
+    },
+    "asr_merged_kev_t0.2": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.27398584632043005
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.2642523918715901
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2050303386181249
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24775619227004833,
+        "wer_weighted": 0.2588986455814987
+      },
+      "num_files": 3
+    },
+    "asr_merged_kev_t0.3": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.27394717506477434
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.2642523918715901
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2046388725778039
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24761281317138942,
+        "wer_weighted": 0.25881904388072224
+      },
+      "num_files": 3
+    },
+    "asr_merged_kev_t0.5": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.2734831199969063
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.26429192693919507
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2039538070072421
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24724295131444782,
+        "wer_weighted": 0.2585258161446174
+      },
+      "num_files": 3
+    },
+    "asr_parakeet": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.2730964074403496
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.2648058828180596
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.20424740653748288
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.24738323226529735,
+        "wer_weighted": 0.258617736091712
+      },
+      "num_files": 3
+    },
+    "asr_qwen3-asr": {
+      "per_file": [
+        {
+          "file_id": "3",
+          "duration_secs": 7931.297959183674,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Rebel Without A Cause"
+          },
+          "wer": 0.2798252059244364
+        },
+        {
+          "file_id": "4",
+          "duration_secs": 7573.681632653062,
+          "metadata": {
+            "show_title": "The Read",
+            "episode_title": "Spice or Sour Cream?"
+          },
+          "wer": 0.26899659998418596
+        },
+        {
+          "file_id": "9",
+          "duration_secs": 2974.08,
+          "metadata": {
+            "show_title": "Podcasts in Color",
+            "episode_title": "Women Creating Podcast Networks ft. Ahyiana of @SPQPodcast"
+          },
+          "wer": 0.2107065962027794
+        }
+      ],
+      "aggregate": {
+        "wer_macro": 0.2531761340371339,
+        "wer_weighted": 0.2642629048620524
+      },
+      "num_files": 3
+    }
+  },
+  "num_files": 3,
+  "num_variants": 9,
+  "total_duration_hours": 5.133072108843538
+}

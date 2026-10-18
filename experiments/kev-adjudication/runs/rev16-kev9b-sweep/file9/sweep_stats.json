@@ -1,0 +1,22 @@
+{
+  "0": {
+    "overrides": 157,
+    "n_diffs": 332
+  },
+  "0.1": {
+    "overrides": 103,
+    "n_diffs": 332
+  },
+  "0.2": {
+    "overrides": 67,
+    "n_diffs": 332
+  },
+  "0.3": {
+    "overrides": 37,
+    "n_diffs": 332
+  },
+  "0.5": {
+    "overrides": 16,
+    "n_diffs": 332
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "_source": "jev results.json without its 'dnh' block (that moved to the donoharm repo), brought here 2026-10-18 at jev commit b45e770",
+  "date": "2026-09-23",
+  "model": "jaredpalmer/kev-9b (MLX bf16, temperature 2.30)",
+  "dataset": "Rev16 files 3,4,9",
+  "witnesses": [
+    "parakeet",
+    "qwen3-asr",
+    "distil-large-v3"
+  ],
+  "wer": {
+    "asr_distil-large-v3": {
+      "3": 29.6,
+      "4": 27.6,
+      "9": 21.6,
+      "avg": 26.3
+    },
+    "asr_merged_kev": {
+      "3": 27.5,
+      "4": 26.5,
+      "9": 20.8,
+      "avg": 24.9
+    },
+    "asr_merged_kev_t0": {
+      "3": 27.5,
+      "4": 26.5,
+      "9": 20.8,
+      "avg": 24.9
+    },
+    "asr_merged_kev_t0.1": {
+      "3": 27.5,
+      "4": 26.4,
+      "9": 20.7,
+      "avg": 24.9
+    },
+    "asr_merged_kev_t0.2": {
+      "3": 27.4,
+      "4": 26.4,
+      "9": 20.5,
+      "avg": 24.8
+    },
+    "asr_merged_kev_t0.3": {
+      "3": 27.4,
+      "4": 26.4,
+      "9": 20.5,
+      "avg": 24.8
+    },
+    "asr_merged_kev_t0.5": {
+      "3": 27.3,
+      "4": 26.4,
+      "9": 20.4,
+      "avg": 24.7
+    },
+    "asr_parakeet": {
+      "3": 27.3,
+      "4": 26.5,
+      "9": 20.4,
+      "avg": 24.7
+    },
+    "asr_qwen3-asr": {
+      "3": 28.0,
+      "4": 26.9,
+      "9": 21.1,
+      "avg": 25.3
+    }
+  },
+  "adjudication": {
+    "3": {
+      "src_dir": "/Users/ringger/Projects/transcribe-critic/eval-runs/rev16-asr-backends/file3",
+      "models": [
+        "parakeet",
+        "qwen3-asr",
+        "distil-large-v3"
+      ],
+      "base_model": "parakeet",
+      "n_diffs": 1542,
+      "n_clusters": 212,
+      "n_resolved": 1542,
+      "ref_compared": 1520,
+      "ref_agree": 685,
+      "ref_agreement": 0.4506578947368421,
+      "elapsed_s": 341.8
+    },
+    "4": {
+      "src_dir": "/Users/ringger/Projects/transcribe-critic/eval-runs/rev16-asr-backends/file4",
+      "models": [
+        "parakeet",
+        "qwen3-asr",
+        "distil-large-v3"
+      ],
+      "base_model": "parakeet",
+      "n_diffs": 1675,
+      "n_clusters": 193,
+      "n_resolved": 1675,
+      "ref_compared": 1675,
+      "ref_agree": 797,
+      "ref_agreement": 0.47582089552238804,
+      "elapsed_s": 408.1
+    },
+    "9": {
+      "src_dir": "/Users/ringger/Projects/transcribe-critic/eval-runs/rev16-asr-backends/file9",
+      "models": [
+        "parakeet",
+        "qwen3-asr",
+        "distil-large-v3"
+      ],
+      "base_model": "parakeet",
+      "n_diffs": 332,
+      "n_clusters": 102,
+      "n_resolved": 332,
+      "ref_compared": 332,
+      "ref_agree": 161,
+      "ref_agreement": 0.48493975903614456,
+      "elapsed_s": 90.2
+    }
+  },
+  "sweep": {
+    "3": {
+      "0": {
+        "overrides": 738,
+        "n_diffs": 1542
+      },
+      "0.1": {
+        "overrides": 502,
+        "n_diffs": 1542
+      },
+      "0.2": {
+        "overrides": 328,
+        "n_diffs": 1542
+      },
+      "0.3": {
+        "overrides": 209,
+        "n_diffs": 1542
+      },
+      "0.5": {
+        "overrides": 88,
+        "n_diffs": 1542
+      }
+    },
+    "4": {
+      "0": {
+        "overrides": 809,
+        "n_diffs": 1675
+      },
+      "0.1": {
+        "overrides": 562,
+        "n_diffs": 1675
+      },
+      "0.2": {
+        "overrides": 353,
+        "n_diffs": 1675
+      },
+      "0.3": {
+        "overrides": 241,
+        "n_diffs": 1675
+      },
+      "0.5": {
+        "overrides": 95,
+        "n_diffs": 1675
+      }
+    },
+    "9": {
+      "0": {
+        "overrides": 157,
+        "n_diffs": 332
+      },
+      "0.1": {
+        "overrides": 103,
+        "n_diffs": 332
+      },
+      "0.2": {
+        "overrides": 67,
+        "n_diffs": 332
+      },
+      "0.3": {
+        "overrides": 37,
+        "n_diffs": 332
+      },
+      "0.5": {
+        "overrides": 16,
+        "n_diffs": 332
+      }
+    }
+  }
+}

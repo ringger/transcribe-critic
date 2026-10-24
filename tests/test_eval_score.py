@@ -1,6 +1,8 @@
 """Tests for eval/score.py — WER/DER scoring and hypothesis discovery."""
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +16,7 @@ from transcribe_critic.eval.score import (
     score_file,
 )
 from transcribe_critic.eval.datasets import ManifestEntry
+from transcribe_critic.eval import score
 
 
 def _make_entry(**overrides):
@@ -23,6 +26,60 @@ def _make_entry(**overrides):
     )
     defaults.update(overrides)
     return ManifestEntry(**defaults)
+
+
+class TestPlainWerTemporaryFiles:
+    @pytest.mark.parametrize("metric_result", [0.25, None])
+    def test_subprocess_reads_utf8_and_files_are_cleaned(self, tmp_path, monkeypatch, metric_result):
+        reference = tmp_path / "reference.stm"
+        hypothesis = tmp_path / "hypothesis.stm"
+        reference_text = "file 1 alice 0 1 <NA> café\nfile 1 bob 1 2 <NA> 世界\n"
+        hypothesis_text = "file 1 carol 0 2 <NA> café 世界\n"
+        reference.write_text(reference_text, encoding="utf-8")
+        hypothesis.write_text(hypothesis_text, encoding="utf-8")
+        temporary_files = []
+
+        def controlled_metric(ref_path, hyp_path, metric):
+            assert metric == "cpwer"
+            temporary_files.extend([ref_path, hyp_path])
+            # Exercise real child-process reads and real filesystem cleanup.
+            child = (
+                "import json,sys; from pathlib import Path; texts=[]\n"
+                "for filename in sys.argv[1:]:\n"
+                " texts.append(Path(filename).read_text(encoding='utf-8'))\n"
+                "print(json.dumps(texts, ensure_ascii=True))\n"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-c", child, str(ref_path), str(hyp_path)],
+                check=True, capture_output=True, text=True, timeout=10,
+            )
+            assert json.loads(completed.stdout) == [
+                "file 1 spk 0 1 <NA> café\nfile 1 spk 1 2 <NA> 世界\n",
+                "file 1 spk 0 2 <NA> café 世界\n",
+            ]
+            return metric_result
+
+        monkeypatch.setattr(score, "_run_meeteval_wer", controlled_metric)
+        assert score._compute_plain_wer(reference, hypothesis) == metric_result
+        assert all(not path.exists() for path in temporary_files)
+        assert reference.read_text(encoding="utf-8") == reference_text
+        assert hypothesis.read_text(encoding="utf-8") == hypothesis_text
+
+    def test_files_are_removed_when_metric_raises(self, tmp_path, monkeypatch):
+        reference = tmp_path / "reference.stm"
+        hypothesis = tmp_path / "hypothesis.stm"
+        reference.write_text("file 1 alice 0 1 <NA> hello\n", encoding="utf-8")
+        hypothesis.write_text("file 1 bob 0 1 <NA> hello\n", encoding="utf-8")
+        temporary_files = []
+
+        def failed_metric(ref_path, hyp_path, metric):
+            temporary_files.extend([ref_path, hyp_path])
+            raise RuntimeError("metric failed")
+
+        monkeypatch.setattr(score, "_run_meeteval_wer", failed_metric)
+        with pytest.raises(RuntimeError, match="metric failed"):
+            score._compute_plain_wer(reference, hypothesis)
+        assert all(not path.exists() for path in temporary_files)
 
 
 class TestRunMeeTevalWer:

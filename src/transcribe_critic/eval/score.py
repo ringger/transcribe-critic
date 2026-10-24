@@ -65,30 +65,18 @@ def _run_meeteval_wer(ref_stm: Path, hyp_stm: Path, metric: str = "cpwer") -> Op
 
 def _compute_plain_wer(ref_stm: Path, hyp_stm: Path) -> Optional[float]:
     """Compute WER by collapsing all speakers into one (ignoring diarization)."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".stm", delete=False) as rf, \
-         tempfile.NamedTemporaryFile(mode="w", suffix=".stm", delete=False) as hf:
+    with tempfile.TemporaryDirectory() as directory:
+        plain_ref = Path(directory) / "ref.stm"
+        plain_hyp = Path(directory) / "hyp.stm"
+        for source, target in ((ref_stm, plain_ref), (hyp_stm, plain_hyp)):
+            with target.open("w", encoding="utf-8") as output:
+                for line in source.read_text(encoding="utf-8").splitlines():
+                    parts = line.split(None, 5)
+                    if len(parts) >= 6:
+                        parts[2] = "spk"
+                        output.write(" ".join(parts) + "\n")
 
-        for line in ref_stm.read_text().splitlines():
-            parts = line.split(None, 5)
-            if len(parts) >= 6:
-                parts[2] = "spk"
-                rf.write(" ".join(parts) + "\n")
-
-        for line in hyp_stm.read_text().splitlines():
-            parts = line.split(None, 5)
-            if len(parts) >= 6:
-                parts[2] = "spk"
-                hf.write(" ".join(parts) + "\n")
-
-        rf.flush()
-        hf.flush()
-
-        result = _run_meeteval_wer(Path(rf.name), Path(hf.name), "cpwer")
-
-        Path(rf.name).unlink(missing_ok=True)
-        Path(hf.name).unlink(missing_ok=True)
-
-        return result
+        return _run_meeteval_wer(plain_ref, plain_hyp, "cpwer")
 
 
 def _run_meeteval_der(ref_rttm: Path, hyp_rttm: Path, collar: float = 0.25) -> Optional[float]:

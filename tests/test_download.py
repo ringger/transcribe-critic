@@ -35,7 +35,7 @@ class TestCleanVttCaptions:
         assert "WEBVTT" not in result
         assert "-->" not in result
 
-    def test_deduplication(self, tmp_path):
+    def test_deduplicates_consecutive_captions(self, tmp_path):
         vtt = tmp_path / "captions.vtt"
         vtt.write_text(
             "WEBVTT\n\n"
@@ -46,6 +46,22 @@ class TestCleanVttCaptions:
         )
         result = clean_vtt_captions(vtt)
         assert result.count("Hello world.") == 1
+
+    def test_preserves_non_consecutive_repeated_captions(self, tmp_path):
+        vtt = tmp_path / "captions.vtt"
+        vtt.write_text(
+            "WEBVTT\n\n"
+            "00:00:01.000 --> 00:00:03.000\n"
+            "Please remember this.\n\n"
+            "00:00:03.000 --> 00:00:05.000\n"
+            "A different thought.\n\n"
+            "00:00:05.000 --> 00:00:07.000\n"
+            "Please remember this.\n"
+        )
+        result = clean_vtt_captions(vtt)
+        assert result == (
+            "Please remember this. A different thought. Please remember this."
+        )
 
     def test_short_form_cue_timestamps(self, tmp_path):
         """WebVTT allows MM:SS.mmm cues with no hour field. These miss the

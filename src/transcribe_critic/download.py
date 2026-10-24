@@ -153,13 +153,13 @@ def download_media(config: SpeechConfig, data: SpeechData, info: dict = None) ->
 
 
 def clean_vtt_captions(vtt_path: Path) -> str:
-    """Convert VTT captions to clean text."""
+    """Convert VTT captions to text, collapsing adjacent duplicate cues."""
     with open(vtt_path, 'r') as f:
         content = f.read()
 
     lines = content.split('\n')
     text_lines = []
-    seen = set()
+    previous_text = None
 
     for line in lines:
         # Skip VTT headers
@@ -174,8 +174,9 @@ def clean_vtt_captions(vtt_path: Path) -> str:
             continue
         # Remove HTML tags and clean
         clean = re.sub(r'<[^>]+>', '', line).strip()
-        if clean and clean not in seen:
-            seen.add(clean)
+        if clean and clean != previous_text:
             text_lines.append(clean)
+        if clean:
+            previous_text = clean
 
     return ' '.join(text_lines)
